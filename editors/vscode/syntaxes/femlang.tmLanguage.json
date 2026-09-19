@@ -1,0 +1,19 @@
+{
+  "scopeName": "source.femlang",
+  "patterns": [
+    {"include": "#comments"},
+    {"include": "#strings"},
+    {"include": "#numbers"},
+    {"include": "#keywords"},
+    {"include": "#constants"},
+    {"include": "#operators"}
+  ],
+  "repository": {
+    "comments": {"patterns": [{"name": "comment.line.number-sign.femlang", "match": "#.*$"}]},
+    "strings": {"name": "string.quoted.double.femlang", "begin": "\"", "end": "\"", "patterns": [{"name": "constant.character.escape.femlang", "match": "\\\\."}]},
+    "numbers": {"patterns": [{"name": "constant.numeric.femlang", "match": "\\b[0-9]+(?:\\.[0-9]+)?\\b"}]},
+    "keywords": {"patterns": [{"name": "keyword.control.femlang", "match": "\\b(?:let|mut|fn|return|serve|if|elif|else|for|in|while|break|slay|continue|skip|try|catch|finally|match)\\b"}]},
+    "constants": {"patterns": [{"name": "constant.language.femlang", "match": "\\b(?:true|false|null)\\b"}]},
+    "operators": {"patterns": [{"name": "keyword.operator.femlang", "match": "===?|!==?|=>|[-+*/%<>]=?"}]}
+  }
+}

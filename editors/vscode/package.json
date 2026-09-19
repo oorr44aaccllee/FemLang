@@ -1,0 +1,24 @@
+{
+  "name": "femlang-language",
+  "displayName": "FemLang Language Support",
+  "description": "Syntax highlighting and editor support for FemLang.",
+  "version": "0.1.0",
+  "publisher": "femlang",
+  "engines": {
+    "vscode": ">=1.80.0"
+  },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [{
+      "id": "femlang",
+      "aliases": ["FemLang", "femlang"],
+      "extensions": [".fem"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "femlang",
+      "scopeName": "source.femlang",
+      "path": "./syntaxes/femlang.tmLanguage.json"
+    }]
+  }
+}
