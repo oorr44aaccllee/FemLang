@@ -3,9 +3,9 @@
 #include "ast.h"
 #include "value.h"
 typedef struct Environment Environment;
-Environment *env_new(void);
-void env_free(Environment *env);
-void env_define(Environment *env, const char *name, Value value);
-Value *env_lookup(Environment *env, const char *name);
-Value eval_ast(Environment *env, const AstNode *node);
+Environment*env_new(void);void env_free(Environment*);
+bool env_define(Environment*,const char*,Value,bool mutable);
+Value*env_lookup(Environment*,const char*);
+bool env_assign(Environment*,const char*,const Value*);
+Value eval_ast(Environment*,const AstNode*);
 #endif
