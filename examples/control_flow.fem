@@ -1,0 +1,6 @@
+let score = 10
+
+if score >= 10:
+    "slay"
+else:
+    "try again"

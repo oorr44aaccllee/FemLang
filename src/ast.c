@@ -1,13 +1,9 @@
 #include "ast.h"
-
 #include <stdlib.h>
 
 AstNode *ast_new(AstNodeType type, size_t line, size_t column) {
     AstNode *node = calloc(1, sizeof(*node));
-    if (node == NULL) {
-        return NULL;
-    }
-
+    if (node == NULL) return NULL;
     node->type = type;
     node->line = line;
     node->column = column;
@@ -18,21 +14,16 @@ bool ast_list_push(AstNodeList *list, AstNode *node) {
     if (list->count == list->capacity) {
         size_t capacity = list->capacity == 0 ? 4 : list->capacity * 2;
         AstNode **items = realloc(list->items, capacity * sizeof(*items));
-        if (items == NULL) {
-            return false;
-        }
+        if (items == NULL) return false;
         list->items = items;
         list->capacity = capacity;
     }
-
     list->items[list->count++] = node;
     return true;
 }
 
 static void ast_free_list(AstNodeList *list) {
-    for (size_t i = 0; i < list->count; i++) {
-        ast_free(list->items[i]);
-    }
+    for (size_t i = 0; i < list->count; i++) ast_free(list->items[i]);
     free(list->items);
     list->items = NULL;
     list->count = 0;
@@ -40,21 +31,12 @@ static void ast_free_list(AstNodeList *list) {
 }
 
 void ast_free(AstNode *node) {
-    if (node == NULL) {
-        return;
-    }
-
+    if (node == NULL) return;
     switch (node->type) {
-        case AST_STRING:
-        case AST_IDENTIFIER:
-            free(node->as.string);
-            break;
-        case AST_LIST:
-            ast_free_list(&node->as.list.elements);
-            break;
-        case AST_UNARY:
-            ast_free(node->as.unary.operand);
-            break;
+        case AST_STRING: free(node->as.string); break;
+        case AST_IDENTIFIER: free(node->as.identifier); break;
+        case AST_LIST: ast_free_list(&node->as.list.elements); break;
+        case AST_UNARY: ast_free(node->as.unary.operand); break;
         case AST_BINARY:
             ast_free(node->as.binary.left);
             ast_free(node->as.binary.right);
@@ -70,15 +52,17 @@ void ast_free(AstNode *node) {
         case AST_EXPRESSION_STATEMENT:
             ast_free(node->as.expression_statement.expression);
             break;
-        case AST_RETURN:
-            ast_free(node->as.return_statement.value);
+        case AST_RETURN: ast_free(node->as.return_statement.value); break;
+        case AST_IF:
+            ast_free(node->as.if_statement.condition);
+            ast_free(node->as.if_statement.then_branch);
+            ast_free(node->as.if_statement.else_branch);
             break;
         case AST_PROGRAM:
+        case AST_BLOCK:
             ast_free_list(&node->as.program.statements);
             break;
-        default:
-            break;
+        default: break;
     }
-
     free(node);
 }

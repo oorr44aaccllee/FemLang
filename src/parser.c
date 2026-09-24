@@ -1,324 +1,99 @@
 #include "parser.h"
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-static void advance(Parser *parser) {
-    parser->previous = parser->current;
-    parser->current = lexer_next(&parser->lexer);
+static void advance(Parser *p) { p->previous = p->current; p->current = lexer_next(&p->lexer); }
+static bool check(const Parser *p, TokenType t) { return p->current.type == t; }
+static bool match(Parser *p, TokenType t) { if (!check(p, t)) return false; advance(p); return true; }
+static void error_current(Parser *p, const char *message) { if (!p->had_error) { p->had_error = true; snprintf(p->error_message, sizeof(p->error_message), "line %zu, column %zu: %s", p->current.line, p->current.column, message); } }
+static char *copy_token(Token t) { char *s = malloc(t.length + 1); if (!s) return NULL; memcpy(s, t.start, t.length); s[t.length] = '\0'; return s; }
+static AstNode *expression(Parser *p);
+static AstNode *statement(Parser *p);
+
+static AstNode *primary(Parser *p) {
+    Token t = p->current;
+    if (match(p, TOKEN_INTEGER)) { AstNode *n = ast_new(AST_INTEGER, t.line, t.column); if (n) n->as.integer = t.integer_value; return n; }
+    if (match(p, TOKEN_FLOAT)) { AstNode *n = ast_new(AST_FLOAT, t.line, t.column); if (n) n->as.floating = t.float_value; return n; }
+    if (match(p, TOKEN_STRING)) { AstNode *n = ast_new(AST_STRING, t.line, t.column); if (n) { n->as.string = copy_token(t); if (!n->as.string) { ast_free(n); return NULL; } } return n; }
+    if (match(p, TOKEN_TRUE) || match(p, TOKEN_FALSE)) { AstNode *n = ast_new(AST_BOOLEAN, t.line, t.column); if (n) n->as.boolean = t.type == TOKEN_TRUE; return n; }
+    if (match(p, TOKEN_NULL)) return ast_new(AST_NULL, t.line, t.column);
+    if (match(p, TOKEN_IDENTIFIER)) { AstNode *n = ast_new(AST_IDENTIFIER, t.line, t.column); if (n) { n->as.identifier = copy_token(t); if (!n->as.identifier) { ast_free(n); return NULL; } } return n; }
+    if (match(p, TOKEN_LEFT_PAREN)) { AstNode *n = expression(p); if (!match(p, TOKEN_RIGHT_PAREN)) error_current(p, "expected ')' after expression"); return n; }
+    error_current(p, "expected an expression"); return NULL;
 }
-
-static bool check(const Parser *parser, TokenType type) {
-    return parser->current.type == type;
+static AstNode *unary(Parser *p) {
+    if (match(p, TOKEN_BANG) || match(p, TOKEN_MINUS)) { Token op = p->previous; AstNode *operand = unary(p); if (!operand) return NULL; AstNode *n = ast_new(AST_UNARY, op.line, op.column); if (!n) { ast_free(operand); return NULL; } n->as.unary.operator_type = op.type; n->as.unary.operand = operand; return n; }
+    return primary(p);
 }
-
-static bool match(Parser *parser, TokenType type) {
-    if (!check(parser, type)) {
-        return false;
-    }
-    advance(parser);
-    return true;
-}
-
-static void error_at_current(Parser *parser, const char *message) {
-    if (parser->had_error) {
-        return;
-    }
-
-    parser->had_error = true;
-    snprintf(parser->error_message, sizeof(parser->error_message),
-        "line %zu, column %zu: %s",
-        parser->current.line, parser->current.column, message);
-}
-
-static char *copy_token(Token token) {
-    char *text = malloc(token.length + 1);
-    if (text == NULL) {
-        return NULL;
-    }
-    memcpy(text, token.start, token.length);
-    text[token.length] = '\0';
-    return text;
-}
-
-static AstNode *expression(Parser *parser);
-
-static AstNode *primary(Parser *parser) {
-    Token token = parser->current;
-
-    if (match(parser, TOKEN_INTEGER)) {
-        AstNode *node = ast_new(AST_INTEGER, token.line, token.column);
-        if (node != NULL) {
-            node->as.integer = token.integer_value;
-        }
-        return node;
-    }
-
-    if (match(parser, TOKEN_FLOAT)) {
-        AstNode *node = ast_new(AST_FLOAT, token.line, token.column);
-        if (node != NULL) {
-            node->as.floating = token.float_value;
-        }
-        return node;
-    }
-
-    if (match(parser, TOKEN_STRING)) {
-        AstNode *node = ast_new(AST_STRING, token.line, token.column);
-        if (node != NULL) {
-            node->as.string = copy_token(token);
-            if (node->as.string == NULL) {
-                ast_free(node);
-                return NULL;
-            }
-        }
-        return node;
-    }
-
-    if (match(parser, TOKEN_TRUE) || match(parser, TOKEN_FALSE)) {
-        AstNode *node = ast_new(AST_BOOLEAN, token.line, token.column);
-        if (node != NULL) {
-            node->as.boolean = token.type == TOKEN_TRUE;
-        }
-        return node;
-    }
-
-    if (match(parser, TOKEN_NULL)) {
-        return ast_new(AST_NULL, token.line, token.column);
-    }
-
-    if (match(parser, TOKEN_IDENTIFIER)) {
-        AstNode *node = ast_new(AST_IDENTIFIER, token.line, token.column);
-        if (node != NULL) {
-            node->as.identifier = copy_token(token);
-            if (node->as.identifier == NULL) {
-                ast_free(node);
-                return NULL;
-            }
-        }
-        return node;
-    }
-
-    if (match(parser, TOKEN_LEFT_PAREN)) {
-        AstNode *node = expression(parser);
-        if (!match(parser, TOKEN_RIGHT_PAREN)) {
-            error_at_current(parser, "expected ')' after expression");
-        }
-        return node;
-    }
-
-    error_at_current(parser, "expected an expression");
-    return NULL;
-}
-
-static AstNode *unary(Parser *parser) {
-    if (match(parser, TOKEN_BANG) || match(parser, TOKEN_MINUS)) {
-        Token operator_token = parser->previous;
-        AstNode *operand = unary(parser);
-        if (operand == NULL) {
-            return NULL;
-        }
-
-        AstNode *node = ast_new(AST_UNARY, operator_token.line, operator_token.column);
-        if (node == NULL) {
-            ast_free(operand);
-            return NULL;
-        }
-        node->as.unary.operator_type = operator_token.type;
-        node->as.unary.operand = operand;
-        return node;
-    }
-
-    return primary(parser);
-}
-
-static AstNode *factor(Parser *parser) {
-    AstNode *left = unary(parser);
-    while (left != NULL && (check(parser, TOKEN_STAR) ||
-        check(parser, TOKEN_SLASH) || check(parser, TOKEN_PERCENT))) {
-        advance(parser);
-        Token operator_token = parser->previous;
-        AstNode *right = unary(parser);
-        if (right == NULL) {
-            ast_free(left);
-            return NULL;
-        }
-        AstNode *node = ast_new(AST_BINARY, operator_token.line, operator_token.column);
-        if (node == NULL) {
-            ast_free(left);
-            ast_free(right);
-            return NULL;
-        }
-        node->as.binary.operator_type = operator_token.type;
-        node->as.binary.left = left;
-        node->as.binary.right = right;
-        left = node;
+static AstNode *binary_level(Parser *p, AstNode *(*next)(Parser *), const TokenType *types, size_t count) {
+    AstNode *left = next(p);
+    while (left) {
+        bool found = false; for (size_t i = 0; i < count; i++) if (check(p, types[i])) { found = true; break; }
+        if (!found) break;
+        advance(p); Token op = p->previous; AstNode *right = next(p); if (!right) { ast_free(left); return NULL; }
+        AstNode *n = ast_new(AST_BINARY, op.line, op.column); if (!n) { ast_free(left); ast_free(right); return NULL; }
+        n->as.binary.operator_type = op.type; n->as.binary.left = left; n->as.binary.right = right; left = n;
     }
     return left;
 }
+static AstNode *factor(Parser *p) { static const TokenType ops[] = { TOKEN_STAR, TOKEN_SLASH, TOKEN_PERCENT }; return binary_level(p, unary, ops, 3); }
+static AstNode *term(Parser *p) { static const TokenType ops[] = { TOKEN_PLUS, TOKEN_MINUS }; return binary_level(p, factor, ops, 2); }
+static AstNode *comparison(Parser *p) { static const TokenType ops[] = { TOKEN_EQUAL_EQUAL, TOKEN_BANG_EQUAL, TOKEN_LESS, TOKEN_LESS_EQUAL, TOKEN_GREATER, TOKEN_GREATER_EQUAL }; return binary_level(p, term, ops, 6); }
+static AstNode *expression(Parser *p) { return comparison(p); }
 
-static AstNode *term(Parser *parser) {
-    AstNode *left = factor(parser);
-    while (left != NULL && (check(parser, TOKEN_PLUS) || check(parser, TOKEN_MINUS))) {
-        advance(parser);
-        Token operator_token = parser->previous;
-        AstNode *right = factor(parser);
-        if (right == NULL) {
-            ast_free(left);
-            return NULL;
-        }
-        AstNode *node = ast_new(AST_BINARY, operator_token.line, operator_token.column);
-        if (node == NULL) {
-            ast_free(left);
-            ast_free(right);
-            return NULL;
-        }
-        node->as.binary.operator_type = operator_token.type;
-        node->as.binary.left = left;
-        node->as.binary.right = right;
-        left = node;
+static AstNode *block(Parser *p, size_t line, size_t column) {
+    if (!match(p, TOKEN_NEWLINE)) { error_current(p, "expected a new line after ':'"); return NULL; }
+    if (!match(p, TOKEN_INDENT)) { error_current(p, "expected an indented block"); return NULL; }
+    AstNode *b = ast_new(AST_BLOCK, line, column); if (!b) return NULL;
+    while (!check(p, TOKEN_DEDENT) && !check(p, TOKEN_EOF) && !p->had_error) {
+        if (match(p, TOKEN_NEWLINE)) continue;
+        AstNode *s = statement(p); if (!s) { ast_free(b); return NULL; }
+        if (!ast_list_push(&b->as.program.statements, s)) { ast_free(s); ast_free(b); return NULL; }
+        match(p, TOKEN_NEWLINE);
     }
-    return left;
+    if (!match(p, TOKEN_DEDENT)) { error_current(p, "expected end of indented block"); ast_free(b); return NULL; }
+    return b;
 }
-
-static AstNode *comparison(Parser *parser) {
-    AstNode *left = term(parser);
-    while (left != NULL && (check(parser, TOKEN_EQUAL_EQUAL) ||
-        check(parser, TOKEN_BANG_EQUAL) || check(parser, TOKEN_LESS) ||
-        check(parser, TOKEN_LESS_EQUAL) || check(parser, TOKEN_GREATER) ||
-        check(parser, TOKEN_GREATER_EQUAL))) {
-        advance(parser);
-        Token operator_token = parser->previous;
-        AstNode *right = term(parser);
-        if (right == NULL) {
-            ast_free(left);
-            return NULL;
-        }
-        AstNode *node = ast_new(AST_BINARY, operator_token.line, operator_token.column);
-        if (node == NULL) {
-            ast_free(left);
-            ast_free(right);
-            return NULL;
-        }
-        node->as.binary.operator_type = operator_token.type;
-        node->as.binary.left = left;
-        node->as.binary.right = right;
-        left = node;
+static AstNode *if_statement(Parser *p) {
+    Token keyword = p->previous;
+    AstNode *condition = expression(p);
+    if (!condition) return NULL;
+    if (!match(p, TOKEN_COLON)) { error_current(p, "expected ':' after condition"); ast_free(condition); return NULL; }
+    AstNode *then_branch = block(p, keyword.line, keyword.column); if (!then_branch) { ast_free(condition); return NULL; }
+    AstNode *else_branch = NULL;
+    if (match(p, TOKEN_ELSE)) {
+        if (!match(p, TOKEN_COLON)) { error_current(p, "expected ':' after else"); ast_free(condition); ast_free(then_branch); return NULL; }
+        else_branch = block(p, keyword.line, keyword.column); if (!else_branch) { ast_free(condition); ast_free(then_branch); return NULL; }
     }
-    return left;
+    AstNode *n = ast_new(AST_IF, keyword.line, keyword.column); if (!n) { ast_free(condition); ast_free(then_branch); ast_free(else_branch); return NULL; }
+    n->as.if_statement.condition = condition; n->as.if_statement.then_branch = then_branch; n->as.if_statement.else_branch = else_branch; return n;
 }
-
-static AstNode *expression(Parser *parser) {
-    return comparison(parser);
+static AstNode *statement(Parser *p) {
+    while (match(p, TOKEN_NEWLINE)) {}
+    if (check(p, TOKEN_EOF) || check(p, TOKEN_DEDENT)) return NULL;
+    if (match(p, TOKEN_IF)) return if_statement(p);
+    if (match(p, TOKEN_LET) || match(p, TOKEN_MUT)) {
+        Token keyword = p->previous; bool mutable = keyword.type == TOKEN_MUT;
+        if (!check(p, TOKEN_IDENTIFIER)) { error_current(p, "expected variable name"); return NULL; }
+        Token name = p->current; advance(p); if (!match(p, TOKEN_ASSIGN)) { error_current(p, "expected '=' after variable name"); return NULL; }
+        AstNode *value = expression(p); if (!value) return NULL; AstNode *n = ast_new(AST_LET, keyword.line, keyword.column); if (!n) { ast_free(value); return NULL; }
+        n->as.declaration.name = copy_token(name); n->as.declaration.mutable = mutable; n->as.declaration.value = value; if (!n->as.declaration.name) { ast_free(n); return NULL; } return n;
+    }
+    if (match(p, TOKEN_RETURN)) { Token k = p->previous; AstNode *v = check(p, TOKEN_NEWLINE) || check(p, TOKEN_DEDENT) || check(p, TOKEN_EOF) ? NULL : expression(p); AstNode *n = ast_new(AST_RETURN, k.line, k.column); if (!n) { ast_free(v); return NULL; } n->as.return_statement.value = v; return n; }
+    AstNode *v = expression(p); if (!v) return NULL; AstNode *n = ast_new(AST_EXPRESSION_STATEMENT, v->line, v->column); if (!n) { ast_free(v); return NULL; } n->as.expression_statement.expression = v; return n;
 }
-
-static AstNode *statement(Parser *parser) {
-    while (match(parser, TOKEN_NEWLINE)) {
+void parser_init(Parser *p, const char *source, size_t length) { memset(p, 0, sizeof(*p)); lexer_init(&p->lexer, source, length); p->current = lexer_next(&p->lexer); }
+AstNode *parser_parse(Parser *p) {
+    AstNode *program = ast_new(AST_PROGRAM, 1, 1); if (!program) return NULL;
+    while (!check(p, TOKEN_EOF) && !p->had_error) {
+        if (match(p, TOKEN_NEWLINE)) continue;
+        AstNode *s = statement(p); if (!s) { if (!p->had_error && check(p, TOKEN_EOF)) break; ast_free(program); return NULL; }
+        if (!ast_list_push(&program->as.program.statements, s)) { ast_free(s); ast_free(program); return NULL; }
+        match(p, TOKEN_NEWLINE);
     }
-
-    if (check(parser, TOKEN_EOF)) {
-        return NULL;
-    }
-
-    if (match(parser, TOKEN_LET) || match(parser, TOKEN_MUT)) {
-        Token keyword = parser->previous;
-        bool mutable = keyword.type == TOKEN_MUT;
-        if (!check(parser, TOKEN_IDENTIFIER)) {
-            error_at_current(parser, "expected variable name");
-            return NULL;
-        }
-        Token name = parser->current;
-        advance(parser);
-        if (!match(parser, TOKEN_ASSIGN)) {
-            error_at_current(parser, "expected '=' after variable name");
-            return NULL;
-        }
-        AstNode *value = expression(parser);
-        if (value == NULL) {
-            return NULL;
-        }
-        AstNode *node = ast_new(AST_LET, keyword.line, keyword.column);
-        if (node == NULL) {
-            ast_free(value);
-            return NULL;
-        }
-        node->as.declaration.name = copy_token(name);
-        node->as.declaration.mutable = mutable;
-        node->as.declaration.value = value;
-        if (node->as.declaration.name == NULL) {
-            ast_free(node);
-            return NULL;
-        }
-        return node;
-    }
-
-    if (match(parser, TOKEN_RETURN)) {
-        Token keyword = parser->previous;
-        AstNode *value = check(parser, TOKEN_NEWLINE) || check(parser, TOKEN_EOF)
-            ? NULL : expression(parser);
-        AstNode *node = ast_new(AST_RETURN, keyword.line, keyword.column);
-        if (node == NULL) {
-            ast_free(value);
-            return NULL;
-        }
-        node->as.return_statement.value = value;
-        return node;
-    }
-
-    AstNode *value = expression(parser);
-    if (value == NULL) {
-        return NULL;
-    }
-    AstNode *node = ast_new(AST_EXPRESSION_STATEMENT, value->line, value->column);
-    if (node == NULL) {
-        ast_free(value);
-        return NULL;
-    }
-    node->as.expression_statement.expression = value;
-    return node;
-}
-
-void parser_init(Parser *parser, const char *source, size_t length) {
-    memset(parser, 0, sizeof(*parser));
-    lexer_init(&parser->lexer, source, length);
-    parser->current = lexer_next(&parser->lexer);
-}
-
-AstNode *parser_parse(Parser *parser) {
-    AstNode *program = ast_new(AST_PROGRAM, 1, 1);
-    if (program == NULL) {
-        return NULL;
-    }
-
-    while (!check(parser, TOKEN_EOF) && !parser->had_error) {
-        AstNode *node = statement(parser);
-        if (node == NULL) {
-            if (!parser->had_error && check(parser, TOKEN_EOF)) {
-                break;
-            }
-            ast_free(program);
-            return NULL;
-        }
-        if (!ast_list_push(&program->as.program.statements, node)) {
-            ast_free(node);
-            ast_free(program);
-            return NULL;
-        }
-        match(parser, TOKEN_NEWLINE);
-    }
-
-    if (check(parser, TOKEN_ERROR)) {
-        error_at_current(parser, "lexer error while parsing");
-    }
-
-    if (parser->had_error) {
-        ast_free(program);
-        return NULL;
-    }
-
+    if (check(p, TOKEN_ERROR)) error_current(p, "lexer error while parsing");
+    if (p->had_error) { ast_free(program); return NULL; }
     return program;
 }
-
-const char *parser_error(const Parser *parser) {
-    return parser->error_message;
-}
+const char *parser_error(const Parser *p) { return p->error_message; }
