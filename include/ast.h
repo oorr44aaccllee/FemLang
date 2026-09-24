@@ -6,22 +6,10 @@
 #include <stddef.h>
 
 typedef enum {
-    AST_PROGRAM,
-    AST_BLOCK,
-    AST_INTEGER,
-    AST_FLOAT,
-    AST_STRING,
-    AST_BOOLEAN,
-    AST_NULL,
-    AST_IDENTIFIER,
-    AST_LIST,
-    AST_UNARY,
-    AST_BINARY,
-    AST_CALL,
-    AST_LET,
-    AST_EXPRESSION_STATEMENT,
-    AST_RETURN,
-    AST_IF
+    AST_PROGRAM, AST_BLOCK, AST_INTEGER, AST_FLOAT, AST_STRING,
+    AST_BOOLEAN, AST_NULL, AST_IDENTIFIER, AST_LIST, AST_UNARY,
+    AST_BINARY, AST_CALL, AST_LET, AST_EXPRESSION_STATEMENT,
+    AST_RETURN, AST_IF
 } AstNodeType;
 
 typedef struct AstNode AstNode;
@@ -45,7 +33,7 @@ struct AstNode {
         struct { AstNode *expression; } expression_statement;
         struct { AstNode *value; } return_statement;
         struct { AstNode *condition; AstNode *then_branch; AstNode *else_branch; } if_statement;
-        struct { AstNodeList statements; } program;
+        struct { AstNodeList statements; } block;
     } as;
 };
 
