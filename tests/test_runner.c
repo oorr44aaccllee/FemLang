@@ -13,98 +13,739 @@ static int failures = 0;
 
 #define CHECK(condition) do { \
     if (!(condition)) { \
-        fprintf(stderr, "FAIL: %s:%d: %s\n", __FILE__, __LINE__, #condition); \
+        fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #condition); \
         failures++; \
     } \
 } while (0)
 
-static AstNode *parse_source(const char *source, Parser *parser) {
-    parser_init(parser, source, strlen(source));
-    return parser_parse(parser);
+/*
+ * Lexer helpers
+ */
+
+typedef struct {
+    Token *items;
+    size_t count;
+    size_t capacity;
+} TokenStream;
+
+static void lex_source(const char *source, TokenStream *stream) {
+    stream->items = NULL;
+    stream->count = 0;
+    stream->capacity = 0;
+
+    Lexer lexer;
+    lexer_init(&lexer, source, strlen(source));
+
+    for (;;) {
+        Token token = lexer_next(&lexer);
+        if (stream->count == stream->capacity) {
+            size_t new_capacity = stream->capacity == 0 ? 16U : stream->capacity * 2U;
+            Token *new_items = realloc(stream->items, new_capacity * sizeof(Token));
+            if (new_items == NULL) {
+                fputs("FAIL: test lexer ran out of memory\n", stderr);
+                free(stream->items);
+                stream->items = NULL;
+                stream->count = 0;
+                stream->capacity = 0;
+                return;
+            }
+            stream->items = new_items;
+            stream->capacity = new_capacity;
+        }
+        stream->items[stream->count++] = token;
+        if (token.type == TOKEN_EOF || token.type == TOKEN_ERROR) {
+            break;
+        }
+    }
 }
 
-static Value evaluate_source(const char *source, int *ok) {
+static void expect_tokens(
+    const char *source,
+    const TokenType *expected,
+    size_t expected_count
+) {
+    TokenStream stream;
+    lex_source(source, &stream);
+    if (stream.count == 0) {
+        CHECK(stream.count == expected_count);
+        return;
+    }
+
+    size_t common = stream.count < expected_count ? stream.count : expected_count;
+    for (size_t i = 0; i < common; i++) {
+        if (stream.items[i].type != expected[i]) {
+            fprintf(stderr,
+                    "FAIL: token %zu: expected %s, got %s in source:\n%s\n",
+                    i, token_type_name(expected[i]),
+                    token_type_name(stream.items[i].type), source);
+            failures++;
+            break;
+        }
+    }
+    if (stream.count != expected_count) {
+        fprintf(stderr,
+                "FAIL: token count %zu, expected %zu in source:\n%s\n",
+                stream.count, expected_count, source);
+        failures++;
+    }
+    free(stream.items);
+}
+
+static void expect_stream_contains_error(const char *source) {
+    TokenStream stream;
+    lex_source(source, &stream);
+    bool found = false;
+    for (size_t i = 0; i < stream.count; i++) {
+        if (stream.items[i].type == TOKEN_ERROR) {
+            found = true;
+            break;
+        }
+    }
+    CHECK(found);
+    if (!found) {
+        for (size_t i = 0; i < stream.count; i++) {
+            fprintf(stderr, "  token %zu: %s\n", i,
+                    token_type_name(stream.items[i].type));
+        }
+    }
+    free(stream.items);
+}
+
+/*
+ * Parser/evaluator helpers
+ */
+
+typedef struct {
+    Value result;
+    char error[256];
+    int parsed;
+} RunResult;
+
+static RunResult run_source(const char *source) {
+    RunResult out;
+    out.error[0] = '\0';
+    out.parsed = 0;
+
     Parser parser;
-    AstNode *program = parse_source(source, &parser);
-    if (program == NULL || parser.had_error) {
+    parser_init(&parser, source, strlen(source));
+    AstNode *program = parser_parse(&parser);
+    if (program == NULL) {
+        out.result = value_null();
+        snprintf(out.error, sizeof(out.error), "%s", parser_error(&parser));
+        return out;
+    }
+    out.parsed = 1;
+
+    Environment *env = env_new();
+    if (env == NULL) {
+        out.result = value_null();
+        snprintf(out.error, sizeof(out.error), "out of memory");
         ast_free(program);
-        *ok = 0;
-        return value_null();
+        return out;
     }
 
-    Environment *environment = env_new();
-    if (environment == NULL) {
-        ast_free(program);
-        *ok = 0;
-        return value_null();
+    out.result = eval_ast(env, program);
+    const char *runtime_error = env_error(env);
+    if (runtime_error != NULL) {
+        snprintf(out.error, sizeof(out.error), "%s", runtime_error);
     }
 
-    Value result = eval_ast(environment, program);
-    env_free(environment);
+    env_free(env);
     ast_free(program);
-    *ok = 1;
-    return result;
+    return out;
 }
 
-static void test_lexer_indent_tokens(void) {
-    const char *source = "if true:\n    1\n2\n";
+static AstNode *parse_program(const char *source, Parser *out_parser) {
+    parser_init(out_parser, source, strlen(source));
+    return parser_parse(out_parser);
+}
+
+static void check_int_result(const char *source, int64_t expected) {
+    RunResult run = run_source(source);
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_INT);
+    CHECK(run.result.as.integer == expected);
+    value_free(&run.result);
+}
+
+static void check_string_result(const char *source, const char *expected) {
+    RunResult run = run_source(source);
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_STRING);
+    CHECK(expected != NULL && strcmp(run.result.as.string, expected) == 0);
+    value_free(&run.result);
+}
+
+static void check_bool_result(const char *source, bool expected) {
+    RunResult run = run_source(source);
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_BOOL);
+    CHECK(run.result.as.boolean == expected);
+    value_free(&run.result);
+}
+
+/*
+ * Lexer tests
+ */
+
+static void test_lexer_keywords(void) {
+    const TokenType expected[] = {
+        TOKEN_LET, TOKEN_MUT, TOKEN_FN, TOKEN_RETURN, TOKEN_IF,
+        TOKEN_ELIF, TOKEN_ELSE, TOKEN_FOR, TOKEN_IN, TOKEN_WHILE,
+        TOKEN_BREAK, TOKEN_CONTINUE, TOKEN_TRUE, TOKEN_FALSE, TOKEN_NULL,
+        TOKEN_TRY, TOKEN_CATCH, TOKEN_FINALLY, TOKEN_MATCH, TOKEN_EOF
+    };
+    expect_tokens(
+        "let mut fn return if elif else for in while break continue "
+        "true false null try catch finally match",
+        expected, sizeof(expected) / sizeof(expected[0]));
+}
+
+static void test_lexer_playful_aliases(void) {
+    const TokenType expected[] = {
+        TOKEN_LET, TOKEN_LET, TOKEN_RETURN, TOKEN_RETURN,
+        TOKEN_BREAK, TOKEN_CONTINUE, TOKEN_EOF
+    };
+    expect_tokens("spark let serve return slay skip",
+                  expected, sizeof(expected) / sizeof(expected[0]));
+}
+
+static void test_lexer_identifiers(void) {
+    const TokenType expected[] = {
+        TOKEN_IDENTIFIER, TOKEN_IDENTIFIER, TOKEN_IDENTIFIER, TOKEN_EOF
+    };
+    expect_tokens("foo _bar camelCase2", expected,
+                  sizeof(expected) / sizeof(expected[0]));
+}
+
+static void test_lexer_numbers(void) {
+    const TokenType expected[] = {
+        TOKEN_INTEGER, TOKEN_NEWLINE, TOKEN_FLOAT, TOKEN_NEWLINE,
+        TOKEN_FLOAT, TOKEN_NEWLINE, TOKEN_EOF
+    };
+    expect_tokens("42\n3.14\n0.5\n", expected,
+                  sizeof(expected) / sizeof(expected[0]));
+}
+
+static void test_lexer_strings(void) {
+    const TokenType expected[] = {
+        TOKEN_STRING, TOKEN_STRING, TOKEN_STRING, TOKEN_EOF
+    };
+    expect_tokens("\"hello\" \"\" \"a\\\"b\"", expected,
+                  sizeof(expected) / sizeof(expected[0]));
+}
+
+static void test_lexer_unterminated_string(void) {
+    expect_stream_contains_error("\"hello");
+}
+
+static void test_lexer_operators(void) {
+    const TokenType expected[] = {
+        TOKEN_PLUS, TOKEN_MINUS, TOKEN_STAR, TOKEN_SLASH, TOKEN_PERCENT,
+        TOKEN_ASSIGN, TOKEN_EQUAL_EQUAL, TOKEN_BANG, TOKEN_BANG_EQUAL,
+        TOKEN_LESS, TOKEN_LESS_EQUAL, TOKEN_GREATER, TOKEN_GREATER_EQUAL,
+        TOKEN_LEFT_PAREN, TOKEN_RIGHT_PAREN,
+        TOKEN_LEFT_BRACKET, TOKEN_RIGHT_BRACKET,
+        TOKEN_LEFT_BRACE, TOKEN_RIGHT_BRACE,
+        TOKEN_COMMA, TOKEN_DOT, TOKEN_COLON, TOKEN_ARROW, TOKEN_EOF
+    };
+    expect_tokens(
+        "+ - * / % = == ! != < <= > >= ( ) [ ] { } , . : ->",
+        expected, sizeof(expected) / sizeof(expected[0]));
+}
+
+static void test_lexer_newlines_and_eof(void) {
+    const TokenType expected[] = {
+        TOKEN_INTEGER, TOKEN_NEWLINE, TOKEN_INTEGER, TOKEN_NEWLINE, TOKEN_EOF
+    };
+    expect_tokens("1\n2\n", expected, sizeof(expected) / sizeof(expected[0]));
+}
+
+static void test_lexer_no_final_newline(void) {
+    const TokenType expected[] = {
+        TOKEN_LET, TOKEN_IDENTIFIER, TOKEN_ASSIGN, TOKEN_INTEGER, TOKEN_EOF
+    };
+    expect_tokens("let x = 1", expected,
+                  sizeof(expected) / sizeof(expected[0]));
+}
+
+static void test_lexer_indentation_and_dedentation(void) {
     const TokenType expected[] = {
         TOKEN_IF, TOKEN_TRUE, TOKEN_COLON, TOKEN_NEWLINE,
         TOKEN_INDENT, TOKEN_INTEGER, TOKEN_NEWLINE,
         TOKEN_DEDENT, TOKEN_INTEGER, TOKEN_NEWLINE, TOKEN_EOF
     };
-    Lexer lexer;
-    lexer_init(&lexer, source, strlen(source));
+    expect_tokens("if true:\n    1\n2\n", expected,
+                  sizeof(expected) / sizeof(expected[0]));
+}
 
-    for (size_t i = 0; i < sizeof(expected) / sizeof(expected[0]); i++) {
-        CHECK(lexer_next(&lexer).type == expected[i]);
+static void test_lexer_nested_indentation(void) {
+    const TokenType expected[] = {
+        TOKEN_IF, TOKEN_IDENTIFIER, TOKEN_COLON, TOKEN_NEWLINE,
+        TOKEN_INDENT, TOKEN_IF, TOKEN_IDENTIFIER, TOKEN_COLON, TOKEN_NEWLINE,
+        TOKEN_INDENT, TOKEN_INTEGER, TOKEN_NEWLINE,
+        TOKEN_DEDENT, TOKEN_INTEGER, TOKEN_NEWLINE,
+        TOKEN_DEDENT, TOKEN_EOF
+    };
+    expect_tokens("if a:\n    if b:\n        1\n    2\n", expected,
+                  sizeof(expected) / sizeof(expected[0]));
+}
+
+static void test_lexer_dedent_at_file_end(void) {
+    const TokenType expected[] = {
+        TOKEN_IF, TOKEN_IDENTIFIER, TOKEN_COLON, TOKEN_NEWLINE,
+        TOKEN_INDENT, TOKEN_INTEGER, TOKEN_DEDENT, TOKEN_EOF
+    };
+    expect_tokens("if a:\n    1", expected,
+                  sizeof(expected) / sizeof(expected[0]));
+}
+
+static void test_lexer_blank_and_comment_lines(void) {
+    const TokenType expected[] = {
+        TOKEN_INTEGER, TOKEN_NEWLINE,
+        TOKEN_NEWLINE,
+        TOKEN_NEWLINE,
+        TOKEN_INTEGER, TOKEN_NEWLINE, TOKEN_EOF
+    };
+    expect_tokens("1\n\n# comment\n2\n", expected,
+                  sizeof(expected) / sizeof(expected[0]));
+}
+
+static void test_lexer_inconsistent_indentation(void) {
+    expect_stream_contains_error("if true:\n    1\n  2\n");
+}
+
+static void test_lexer_comment_after_code(void) {
+    const TokenType expected[] = {
+        TOKEN_INTEGER, TOKEN_NEWLINE, TOKEN_INTEGER, TOKEN_NEWLINE, TOKEN_EOF
+    };
+    expect_tokens("1 # trailing comment\n2\n", expected,
+                  sizeof(expected) / sizeof(expected[0]));
+}
+
+/*
+ * Parser tests
+ */
+
+static void test_parser_immutable_declaration(void) {
+    Parser parser;
+    AstNode *program = parse_program("let fixed = 1\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
     }
+    CHECK(program->type == AST_PROGRAM);
+    CHECK(program->as.block.statements.count == 1);
+    AstNode *stmt = program->as.block.statements.items[0];
+    CHECK(stmt->type == AST_LET);
+    CHECK(strcmp(stmt->as.declaration.name, "fixed") == 0);
+    CHECK(stmt->as.declaration.mutable == false);
+    CHECK(stmt->as.declaration.value != NULL);
+    CHECK(stmt->as.declaration.value->type == AST_INTEGER);
+    ast_free(program);
 }
 
-static void test_let_and_mut(void) {
-    int ok = 0;
-    Value result = evaluate_source(
-        "let fixed = 1\n"
-        "fixed = 2\n"
-        "fixed\n",
-        &ok
-    );
-    CHECK(ok == 1);
-    CHECK(result.type == VALUE_NULL);
-    value_free(&result);
-
-    result = evaluate_source(
-        "mut score = 1\n"
-        "score = score + 2\n"
-        "score\n",
-        &ok
-    );
-    CHECK(ok == 1);
-    CHECK(result.type == VALUE_INT);
-    CHECK(result.as.integer == 3);
-    value_free(&result);
+static void test_parser_mutable_declaration(void) {
+    Parser parser;
+    AstNode *program = parse_program("mut score = 5\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    CHECK(stmt->type == AST_LET);
+    CHECK(strcmp(stmt->as.declaration.name, "score") == 0);
+    CHECK(stmt->as.declaration.mutable == true);
+    ast_free(program);
 }
+
+static void test_parser_assignment(void) {
+    Parser parser;
+    AstNode *program = parse_program("score = 3\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    CHECK(stmt->type == AST_ASSIGNMENT);
+    CHECK(strcmp(stmt->as.assignment.name, "score") == 0);
+    CHECK(stmt->as.assignment.value != NULL);
+    CHECK(stmt->as.assignment.value->type == AST_INTEGER);
+    ast_free(program);
+}
+
+static void test_parser_string_literal_content(void) {
+    Parser parser;
+    AstNode *program = parse_program("\"Alex\"\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    CHECK(stmt->type == AST_EXPRESSION_STATEMENT);
+    AstNode *expr = stmt->as.expression_statement.expression;
+    CHECK(expr->type == AST_STRING);
+    CHECK(strcmp(expr->as.string, "Alex") == 0);
+    ast_free(program);
+}
+
+static void test_parser_string_escapes(void) {
+    Parser parser;
+    AstNode *program = parse_program("\"a\\nb\\\"c\"\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    AstNode *expr = stmt->as.expression_statement.expression;
+    CHECK(expr->type == AST_STRING);
+    CHECK(strcmp(expr->as.string, "a\nb\"c") == 0);
+    ast_free(program);
+}
+
+static void test_parser_arithmetic_precedence(void) {
+    Parser parser;
+    AstNode *program = parse_program("2 + 3 * 4\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    CHECK(stmt->type == AST_EXPRESSION_STATEMENT);
+    AstNode *expr = stmt->as.expression_statement.expression;
+    CHECK(expr->type == AST_BINARY);
+    CHECK(expr->as.binary.operator_type == TOKEN_PLUS);
+    CHECK(expr->as.binary.left->type == AST_INTEGER);
+    CHECK(expr->as.binary.right->type == AST_BINARY);
+    CHECK(expr->as.binary.right->as.binary.operator_type == TOKEN_STAR);
+    ast_free(program);
+}
+
+static void test_parser_identifier_expression_statement(void) {
+    Parser parser;
+    AstNode *program = parse_program("x + 1\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    CHECK(stmt->type == AST_EXPRESSION_STATEMENT);
+    AstNode *expr = stmt->as.expression_statement.expression;
+    CHECK(expr->type == AST_BINARY);
+    CHECK(expr->as.binary.operator_type == TOKEN_PLUS);
+    CHECK(expr->as.binary.left->type == AST_IDENTIFIER);
+    ast_free(program);
+}
+
+static void test_parser_identifier_precedence(void) {
+    /* a * b + c must parse as (a * b) + c, not a * (b + c). */
+    Parser parser;
+    AstNode *program = parse_program("a * b + c\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *expr = program->as.block.statements.items[0]->as.expression_statement.expression;
+    CHECK(expr->type == AST_BINARY);
+    CHECK(expr->as.binary.operator_type == TOKEN_PLUS);
+    CHECK(expr->as.binary.left->type == AST_BINARY);
+    CHECK(expr->as.binary.left->as.binary.operator_type == TOKEN_STAR);
+    CHECK(expr->as.binary.right->type == AST_IDENTIFIER);
+    ast_free(program);
+}
+
+static void test_parser_assignment_precedence(void) {
+    Parser parser;
+    AstNode *program = parse_program("score = 1 + 2 * 3\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    CHECK(stmt->type == AST_ASSIGNMENT);
+    AstNode *value = stmt->as.assignment.value;
+    CHECK(value->type == AST_BINARY);
+    CHECK(value->as.binary.operator_type == TOKEN_PLUS);
+    CHECK(value->as.binary.right->as.binary.operator_type == TOKEN_STAR);
+    ast_free(program);
+}
+
+static void test_parser_if_else(void) {
+    Parser parser;
+    AstNode *program = parse_program("if true:\n    1\nelse:\n    2\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    CHECK(stmt->type == AST_IF);
+    CHECK(stmt->as.if_statement.condition != NULL);
+    CHECK(stmt->as.if_statement.condition->type == AST_BOOLEAN);
+    CHECK(stmt->as.if_statement.then_branch != NULL);
+    CHECK(stmt->as.if_statement.then_branch->type == AST_BLOCK);
+    CHECK(stmt->as.if_statement.then_branch->as.block.statements.count == 1);
+    CHECK(stmt->as.if_statement.else_branch != NULL);
+    CHECK(stmt->as.if_statement.else_branch->type == AST_BLOCK);
+    ast_free(program);
+}
+
+static void test_parser_block_statements(void) {
+    Parser parser;
+    AstNode *program = parse_program("if a:\n    b\n    c\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    CHECK(stmt->type == AST_IF);
+    AstNode *block = stmt->as.if_statement.then_branch;
+    CHECK(block->as.block.statements.count == 2);
+    ast_free(program);
+}
+
+static void test_parser_invalid_declaration(void) {
+    Parser parser;
+    AstNode *program = parse_program("let = 5\n", &parser);
+    CHECK(program == NULL);
+    CHECK(parser.had_error);
+}
+
+static void test_parser_invalid_assignment(void) {
+    Parser parser;
+    AstNode *program = parse_program("x = \n", &parser);
+    CHECK(program == NULL);
+    CHECK(parser.had_error);
+}
+
+static void test_parser_declaration_without_value(void) {
+    Parser parser;
+    AstNode *program = parse_program("let x\n", &parser);
+    CHECK(program == NULL);
+    CHECK(parser.had_error);
+}
+
+/*
+ * Evaluator tests
+ */
+
+static void test_eval_let_declaration(void) {
+    check_int_result("let x = 42\nx\n", 42);
+}
+
+static void test_eval_mut_declaration(void) {
+    check_int_result("mut x = 7\nx + 1\n", 8);
+}
+
+static void test_eval_successful_reassignment(void) {
+    check_int_result("mut score = 1\nscore = score + 2\nscore\n", 3);
+}
+
+static void test_eval_arithmetic_after_reassignment(void) {
+    check_int_result("mut x = 1\nx = x + 2\nx = x * 3\nx\n", 9);
+}
+
+static void test_eval_immutable_reassignment_fails(void) {
+    RunResult run = run_source("let fixed = 1\nfixed = 2\nfixed\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+
+    /* The environment-level operation must also be rejected directly. */
+    Environment *env = env_new();
+    Value one = value_int(1);
+    Value two = value_int(2);
+    CHECK(env_define(env, "fixed", &one, false));
+    CHECK(env_assign(env, "fixed", &two) == false);
+    CHECK(env_error(env) != NULL);
+    Value *lookup = env_lookup(env, "fixed");
+    CHECK(lookup != NULL && lookup->type == VALUE_INT && lookup->as.integer == 1);
+    env_free(env);
+    value_free(&one);
+    value_free(&two);
+}
+
+static void test_eval_undefined_assignment_fails(void) {
+    RunResult run = run_source("missing = 42\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+
+    /* No implicit binding may be created by the failed assignment. */
+    run = run_source("missing\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    value_free(&run.result);
+}
+
+static void test_env_undefined_assign_no_implicit(void) {
+    Environment *env = env_new();
+    Value forty_two = value_int(42);
+    CHECK(env_assign(env, "missing", &forty_two) == false);
+    CHECK(env_lookup(env, "missing") == NULL);
+    CHECK(env_error(env) != NULL);
+    env_free(env);
+    value_free(&forty_two);
+}
+
+static void test_eval_repeated_string_reassignment(void) {
+    check_string_result("mut value = \"a\"\nvalue = \"b\"\nvalue = \"c\"\nvalue\n",
+                        "c");
+}
+
+static void test_eval_string_reassignment(void) {
+    check_string_result("mut name = \"Alex\"\nname = \"Taylor\"\nname\n",
+                        "Taylor");
+}
+
+static void test_eval_string_comparison(void) {
+    RunResult run = run_source("let a = \"Alex\"\nlet b = \"Alex\"\na == b\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_BOOL);
+    CHECK(run.result.as.boolean == true);
+    value_free(&run.result);
+}
+
+static void test_eval_value_comparisons(void) {
+    check_bool_result("1 == 1\n", true);
+    check_bool_result("1 != 2\n", true);
+    check_bool_result("2 == 1\n", false);
+    check_bool_result("1.5 == 1.5\n", true);
+    check_bool_result("true == true\n", true);
+    check_bool_result("null == null\n", true);
+    check_bool_result("3 != 3\n", false);
+    check_bool_result("1 == 2\n", false);
+}
+
+static void test_eval_string_concatenation(void) {
+    RunResult run = run_source("let a = \"he\"\nlet b = \"llo\"\na + b\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_STRING);
+    CHECK(strcmp(run.result.as.string, "hello") == 0);
+    value_free(&run.result);
+}
+
+static void test_eval_string_ownership(void) {
+    /* Two bindings must not share a mutable string buffer. */
+    check_string_result("mut a = \"x\"\nlet b = a\na = \"y\"\nb\n", "x");
+}
+
+static void test_eval_if_branches(void) {
+    check_int_result("if true:\n    1\nelse:\n    2\n", 1);
+    check_int_result("if false:\n    1\nelse:\n    2\n", 2);
+}
+
+static void test_eval_integer_operations(void) {
+    check_int_result("1 + 2 * 3\n", 7);
+    check_int_result("10 - 4\n", 6);
+    check_int_result("7 % 3\n", 1);
+    check_int_result("-5\n", -5);
+    check_int_result("2 * 3 + 4 * 5\n", 26);
+}
+
+static void test_eval_division_by_zero_fails(void) {
+    RunResult run = run_source("1 / 0\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+}
+
+static void test_eval_undefined_lookup_fails(void) {
+    RunResult run = run_source("nope\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+}
+
+/*
+ * Native registry tests
+ */
 
 static Value native_add(size_t argument_count, const Value *arguments) {
-    if (argument_count != 2 || arguments[0].type != VALUE_INT ||
+    if (argument_count != 2 ||
+        arguments[0].type != VALUE_INT ||
         arguments[1].type != VALUE_INT) {
         return value_null();
     }
     return value_int(arguments[0].as.integer + arguments[1].as.integer);
 }
 
-static void test_native_registry(void) {
+static Value native_double(size_t argument_count, const Value *arguments) {
+    (void)argument_count;
+    if (argument_count != 1 || arguments[0].type != VALUE_INT) {
+        return value_null();
+    }
+    return value_int(arguments[0].as.integer * 2);
+}
+
+static void test_native_register_and_lookup(void) {
     FemNativeRegistry registry;
     native_registry_init(&registry);
 
     CHECK(native_register(&registry, "add", native_add));
+    CHECK(native_lookup(&registry, "add") == native_add);
     CHECK(native_lookup(&registry, "missing") == NULL);
+    CHECK(native_lookup(&registry, NULL) == NULL);
+    CHECK(native_lookup(NULL, "add") == NULL);
+
+    /* Null names and null function pointers are rejected. */
+    CHECK(native_register(&registry, NULL, native_add) == false);
+    CHECK(native_register(&registry, "nope", NULL) == false);
+    CHECK(native_register(NULL, "add", native_add) == false);
+
+    native_registry_free(&registry);
+}
+
+static void test_native_replace_existing_name(void) {
+    FemNativeRegistry registry;
+    native_registry_init(&registry);
+
+    CHECK(native_register(&registry, "add", native_add));
+    CHECK(native_register(&registry, "add", native_double));
+    CHECK(registry.count == 1);
+    CHECK(native_lookup(&registry, "add") == native_double);
+
+    native_registry_free(&registry);
+}
+
+static void test_native_registry_growth(void) {
+    FemNativeRegistry registry;
+    native_registry_init(&registry);
+
+    for (int i = 0; i < 20; i++) {
+        char name[32];
+        snprintf(name, sizeof(name), "fn%d", i);
+        CHECK(native_register(&registry, name, native_add));
+    }
+    CHECK(registry.count == 20);
+    for (int i = 0; i < 20; i++) {
+        char name[32];
+        snprintf(name, sizeof(name), "fn%d", i);
+        CHECK(native_lookup(&registry, name) == native_add);
+    }
+
+    native_registry_free(&registry);
+}
+
+static void test_native_callback_invocation(void) {
+    FemNativeRegistry registry;
+    native_registry_init(&registry);
+    CHECK(native_register(&registry, "add", native_add));
 
     FemNativeFunction add = native_lookup(&registry, "add");
     CHECK(add != NULL);
 
+    Value arguments[] = {value_int(2), value_int(3)};
+    CHECK(add != NULL);
     if (add != NULL) {
-        Value arguments[] = {value_int(2), value_int(3)};
         Value result = add(2, arguments);
         CHECK(result.type == VALUE_INT);
         CHECK(result.as.integer == 5);
@@ -114,10 +755,104 @@ static void test_native_registry(void) {
     native_registry_free(&registry);
 }
 
+static void test_native_cleanup_idempotent(void) {
+    FemNativeRegistry registry;
+    native_registry_init(&registry);
+    CHECK(native_register(&registry, "add", native_add));
+    native_registry_free(&registry);
+    native_registry_free(&registry);
+    CHECK(registry.count == 0);
+}
+
+/*
+ * Value ownership tests
+ */
+
+static void test_value_ownership(void) {
+    Value string = value_string_copy("hello");
+    CHECK(string.type == VALUE_STRING);
+
+    Value clone = value_clone(&string);
+    CHECK(clone.type == VALUE_STRING);
+    CHECK(strcmp(clone.as.string, "hello") == 0);
+    CHECK(clone.as.string != string.as.string);
+
+    value_free(&clone);
+    CHECK(clone.type == VALUE_NULL);
+    value_free(&string);
+    CHECK(string.type == VALUE_NULL);
+
+    Value null_value = value_null();
+    value_free(&null_value);
+    value_free(&null_value);
+
+    Value int_value = value_int(5);
+    value_free(&int_value);
+    CHECK(int_value.type == VALUE_NULL);
+}
+
 int main(void) {
-    test_lexer_indent_tokens();
-    test_let_and_mut();
-    test_native_registry();
+    /* Lexer */
+    test_lexer_keywords();
+    test_lexer_playful_aliases();
+    test_lexer_identifiers();
+    test_lexer_numbers();
+    test_lexer_strings();
+    test_lexer_unterminated_string();
+    test_lexer_operators();
+    test_lexer_newlines_and_eof();
+    test_lexer_no_final_newline();
+    test_lexer_indentation_and_dedentation();
+    test_lexer_nested_indentation();
+    test_lexer_dedent_at_file_end();
+    test_lexer_blank_and_comment_lines();
+    test_lexer_inconsistent_indentation();
+    test_lexer_comment_after_code();
+
+    /* Parser */
+    test_parser_immutable_declaration();
+    test_parser_mutable_declaration();
+    test_parser_assignment();
+    test_parser_string_literal_content();
+    test_parser_string_escapes();
+    test_parser_arithmetic_precedence();
+    test_parser_identifier_expression_statement();
+    test_parser_identifier_precedence();
+    test_parser_assignment_precedence();
+    test_parser_if_else();
+    test_parser_block_statements();
+    test_parser_invalid_declaration();
+    test_parser_invalid_assignment();
+    test_parser_declaration_without_value();
+
+    /* Evaluator */
+    test_eval_let_declaration();
+    test_eval_mut_declaration();
+    test_eval_successful_reassignment();
+    test_eval_arithmetic_after_reassignment();
+    test_eval_immutable_reassignment_fails();
+    test_eval_undefined_assignment_fails();
+    test_env_undefined_assign_no_implicit();
+    test_eval_repeated_string_reassignment();
+    test_eval_string_reassignment();
+    test_eval_string_comparison();
+    test_eval_value_comparisons();
+    test_eval_string_concatenation();
+    test_eval_string_ownership();
+    test_eval_if_branches();
+    test_eval_integer_operations();
+    test_eval_division_by_zero_fails();
+    test_eval_undefined_lookup_fails();
+
+    /* Native registry */
+    test_native_register_and_lookup();
+    test_native_replace_existing_name();
+    test_native_registry_growth();
+    test_native_callback_invocation();
+    test_native_cleanup_idempotent();
+
+    /* Value ownership */
+    test_value_ownership();
 
     if (failures != 0) {
         fprintf(stderr, "%d test(s) failed.\n", failures);

@@ -1,12 +1,348 @@
 #include "lexer.h"
+
 #include <ctype.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
-static bool end(const Lexer*l){return l->position>=l->length;}static char peek(const Lexer*l){return end(l)?'\0':l->source[l->position];}static char nextc(const Lexer*l){return l->position+1>=l->length?'\0':l->source[l->position+1];}static char adv(Lexer*l){if(end(l))return '\0';char c=l->source[l->position++];if(c=='\n'){l->line++;l->column=1;l->at_line_start=true;}else l->column++;return c;}static Token tok(Lexer*l,TokenType t,size_t s,size_t ln,size_t col){Token x={t,l->source+s,l->position-s,ln,col,0,0.0};return x;}static Token err(Lexer*l,size_t s,size_t ln,size_t col){return tok(l,TOKEN_ERROR,s,ln,col);}static bool ids(char c){return isalpha((unsigned char)c)||c=='_';}static bool idp(char c){return isalnum((unsigned char)c)||c=='_';}
-static TokenType kw(const char*s,size_t n){static const char*nms[]={"let","spark","mut","fn","return","serve","if","elif","else","for","in","while","break","slay","continue","skip","true","false","null","try","catch","finally","match"};static const TokenType ts[]={TOKEN_LET,TOKEN_LET,TOKEN_MUT,TOKEN_FN,TOKEN_RETURN,TOKEN_RETURN,TOKEN_IF,TOKEN_ELIF,TOKEN_ELSE,TOKEN_FOR,TOKEN_IN,TOKEN_WHILE,TOKEN_BREAK,TOKEN_BREAK,TOKEN_CONTINUE,TOKEN_CONTINUE,TOKEN_TRUE,TOKEN_FALSE,TOKEN_NULL,TOKEN_TRY,TOKEN_CATCH,TOKEN_FINALLY,TOKEN_MATCH};for(size_t i=0;i<sizeof(ts)/sizeof(ts[0]);i++)if(strlen(nms[i])==n&&!memcmp(nms[i],s,n))return ts[i];return TOKEN_IDENTIFIER;}
-static Token ident(Lexer*l,size_t s,size_t ln,size_t col){while(idp(peek(l)))adv(l);return tok(l,kw(l->source+s,l->position-s),s,ln,col);}static Token number(Lexer*l,size_t s,size_t ln,size_t col){bool f=false;while(isdigit((unsigned char)peek(l)))adv(l);if(peek(l)=='.'&&isdigit((unsigned char)nextc(l))){f=true;adv(l);while(isdigit((unsigned char)peek(l)))adv(l);}Token t=tok(l,f?TOKEN_FLOAT:TOKEN_INTEGER,s,ln,col);size_t n=l->position-s;char b[128];if(n>=sizeof(b)){t.type=TOKEN_ERROR;return t;}memcpy(b,l->source+s,n);b[n]='\0';char*e=NULL;errno=0;if(f)t.float_value=strtod(b,&e);else t.integer_value=strtoll(b,&e,10);if(errno||e==b||*e)t.type=TOKEN_ERROR;return t;}
-static Token stringt(Lexer*l,size_t s,size_t ln,size_t col){adv(l);while(!end(l)&&peek(l)!='"'){if(peek(l)=='\n')return err(l,s,ln,col);if(peek(l)=='\\'){adv(l);if(!end(l))adv(l);}else adv(l);}if(end(l))return err(l,s,ln,col);adv(l);return tok(l,TOKEN_STRING,s,ln,col);}
-static Token punct(Lexer*l,size_t s,size_t ln,size_t col){char c=adv(l);if(c=='-'&&peek(l)=='>'){adv(l);return tok(l,TOKEN_ARROW,s,ln,col);}if((c=='='||c=='!'||c=='<'||c=='>')&&peek(l)=='='){adv(l);return tok(l,c=='='?TOKEN_EQUAL_EQUAL:c=='!'?TOKEN_BANG_EQUAL:c=='<'?TOKEN_LESS_EQUAL:TOKEN_GREATER_EQUAL,s,ln,col);}TokenType t;switch(c){case'+':t=TOKEN_PLUS;break;case'-':t=TOKEN_MINUS;break;case'*':t=TOKEN_STAR;break;case'/':t=TOKEN_SLASH;break;case'%':t=TOKEN_PERCENT;break;case'=':t=TOKEN_ASSIGN;break;case'!':t=TOKEN_BANG;break;case'<':t=TOKEN_LESS;break;case'>':t=TOKEN_GREATER;break;case'(':t=TOKEN_LEFT_PAREN;break;case')':t=TOKEN_RIGHT_PAREN;break;case'[':t=TOKEN_LEFT_BRACKET;break;case']':t=TOKEN_RIGHT_BRACKET;break;case'{':t=TOKEN_LEFT_BRACE;break;case'}':t=TOKEN_RIGHT_BRACE;break;case',':t=TOKEN_COMMA;break;case'.':t=TOKEN_DOT;break;case':':t=TOKEN_COLON;break;default:return err(l,s,ln,col);}return tok(l,t,s,ln,col);}
-static Token indent(Lexer*l){size_t s=l->position,ln=l->line,col=l->column;unsigned spaces=0;while(peek(l)==' '||peek(l)=='\t')spaces+=adv(l)=='\t'?4U:1U;if(peek(l)=='#'||peek(l)=='\n'||end(l)){while(!end(l)&&peek(l)!='\n')adv(l);l->at_line_start=false;return lexer_next(l);}unsigned cur=l->indent_stack[l->indent_depth];l->at_line_start=false;if(spaces>cur){if(l->indent_depth+1>=FEM_MAX_INDENT_DEPTH)return err(l,s,ln,col);l->indent_stack[++l->indent_depth]=spaces;return tok(l,TOKEN_INDENT,s,ln,col);}if(spaces<cur){while(l->indent_depth&&spaces<l->indent_stack[l->indent_depth]){l->indent_depth--;l->pending_dedents++;}if(spaces!=l->indent_stack[l->indent_depth])return err(l,s,ln,col);if(l->pending_dedents){l->pending_dedents--;return tok(l,TOKEN_DEDENT,s,ln,col);}}return lexer_next(l);}
-void lexer_init(Lexer*l,const char*s,size_t n){memset(l,0,sizeof(*l));l->source=s;l->length=n;l->line=1;l->column=1;l->at_line_start=true;}Token lexer_next(Lexer*l){if(l->pending_dedents){l->pending_dedents--;return tok(l,TOKEN_DEDENT,l->position,l->line,l->column);}if(l->at_line_start)return indent(l);while(!end(l)){char c=peek(l);if(c==' '||c=='\t'||c=='\r'){adv(l);continue;}if(c=='#'){while(!end(l)&&peek(l)!='\n')adv(l);continue;}break;}if(end(l)){if(l->indent_depth&&!l->emitted_eof){l->emitted_eof=true;l->pending_dedents=l->indent_depth;l->indent_depth=0;return lexer_next(l);}l->emitted_eof=true;return tok(l,TOKEN_EOF,l->position,l->line,l->column);}size_t s=l->position,ln=l->line,col=l->column;char c=peek(l);if(c=='\n'){adv(l);return tok(l,TOKEN_NEWLINE,s,ln,col);}if(ids(c))return ident(l,s,ln,col);if(isdigit((unsigned char)c))return number(l,s,ln,col);if(c=='"')return stringt(l,s,ln,col);return punct(l,s,ln,col);}
+
+static bool at_end(const Lexer *lexer) {
+    return lexer->position >= lexer->length;
+}
+
+static char peek_char(const Lexer *lexer) {
+    if (at_end(lexer)) {
+        return '\0';
+    }
+    return lexer->source[lexer->position];
+}
+
+static char peek_next_char(const Lexer *lexer) {
+    if (lexer->position + 1 >= lexer->length) {
+        return '\0';
+    }
+    return lexer->source[lexer->position + 1];
+}
+
+static char advance(Lexer *lexer) {
+    if (at_end(lexer)) {
+        return '\0';
+    }
+    char c = lexer->source[lexer->position++];
+    if (c == '\n') {
+        lexer->line++;
+        lexer->column = 1;
+        lexer->at_line_start = true;
+    } else {
+        lexer->column++;
+    }
+    return c;
+}
+
+static Token make_token(
+    Lexer *lexer,
+    TokenType type,
+    size_t start,
+    size_t line,
+    size_t column
+) {
+    Token token;
+    token.type = type;
+    token.start = lexer->source + start;
+    token.length = lexer->position - start;
+    token.line = line;
+    token.column = column;
+    token.integer_value = 0;
+    token.float_value = 0.0;
+    return token;
+}
+
+static Token error_token(Lexer *lexer, size_t start, size_t line, size_t column) {
+    return make_token(lexer, TOKEN_ERROR, start, line, column);
+}
+
+static bool is_identifier_start(char c) {
+    return isalpha((unsigned char)c) || c == '_';
+}
+
+static bool is_identifier_part(char c) {
+    return isalnum((unsigned char)c) || c == '_';
+}
+
+/*
+ * Keywords are stored together with their playful aliases in matching order.
+ * Several aliases intentionally map to the same canonical token type.
+ */
+static TokenType lookup_keyword(const char *start, size_t length) {
+    static const char *const keyword_names[] = {
+        "let",    "spark",   "mut",    "fn",    "return", "serve",
+        "if",     "elif",    "else",   "for",   "in",     "while",
+        "break",  "slay",    "continue", "skip", "true",  "false",
+        "null",   "try",     "catch",  "finally", "match"
+    };
+    static const TokenType keyword_types[] = {
+        TOKEN_LET,   TOKEN_LET,   TOKEN_MUT,   TOKEN_FN,
+        TOKEN_RETURN, TOKEN_RETURN, TOKEN_IF,   TOKEN_ELIF,
+        TOKEN_ELSE,  TOKEN_FOR,   TOKEN_IN,    TOKEN_WHILE,
+        TOKEN_BREAK, TOKEN_BREAK, TOKEN_CONTINUE, TOKEN_CONTINUE,
+        TOKEN_TRUE,  TOKEN_FALSE, TOKEN_NULL,  TOKEN_TRY,
+        TOKEN_CATCH, TOKEN_FINALLY, TOKEN_MATCH
+    };
+
+    for (size_t i = 0; i < sizeof(keyword_types) / sizeof(keyword_types[0]); i++) {
+        if (strlen(keyword_names[i]) == length &&
+            memcmp(keyword_names[i], start, length) == 0) {
+            return keyword_types[i];
+        }
+    }
+    return TOKEN_IDENTIFIER;
+}
+
+static Token identifier_token(Lexer *lexer, size_t start, size_t line, size_t column) {
+    while (is_identifier_part(peek_char(lexer))) {
+        advance(lexer);
+    }
+    TokenType type = lookup_keyword(lexer->source + start, lexer->position - start);
+    return make_token(lexer, type, start, line, column);
+}
+
+static Token number_token(Lexer *lexer, size_t start, size_t line, size_t column) {
+    bool is_float = false;
+
+    while (isdigit((unsigned char)peek_char(lexer))) {
+        advance(lexer);
+    }
+
+    if (peek_char(lexer) == '.' && isdigit((unsigned char)peek_next_char(lexer))) {
+        is_float = true;
+        advance(lexer);
+        while (isdigit((unsigned char)peek_char(lexer))) {
+            advance(lexer);
+        }
+    }
+
+    Token token = make_token(lexer, is_float ? TOKEN_FLOAT : TOKEN_INTEGER,
+                             start, line, column);
+
+    size_t length = lexer->position - start;
+    char buffer[128];
+    if (length >= sizeof(buffer)) {
+        return error_token(lexer, start, line, column);
+    }
+    memcpy(buffer, lexer->source + start, length);
+    buffer[length] = '\0';
+
+    char *end = NULL;
+    errno = 0;
+    if (is_float) {
+        token.float_value = strtod(buffer, &end);
+    } else {
+        token.integer_value = strtoll(buffer, &end, 10);
+    }
+    if (errno != 0 || end == buffer || *end != '\0') {
+        return error_token(lexer, start, line, column);
+    }
+    return token;
+}
+
+/*
+ * Consumes a string literal including both surrounding quotes. The token slice
+ * keeps the quotes and raw escape sequences; the parser decodes the content.
+ */
+static Token string_token(Lexer *lexer, size_t start, size_t line, size_t column) {
+    advance(lexer);
+
+    while (!at_end(lexer) && peek_char(lexer) != '"') {
+        if (peek_char(lexer) == '\n') {
+            return error_token(lexer, start, line, column);
+        }
+        if (peek_char(lexer) == '\\') {
+            advance(lexer);
+            if (!at_end(lexer)) {
+                advance(lexer);
+            }
+        } else {
+            advance(lexer);
+        }
+    }
+
+    if (at_end(lexer)) {
+        return error_token(lexer, start, line, column);
+    }
+    advance(lexer);
+    return make_token(lexer, TOKEN_STRING, start, line, column);
+}
+
+static Token punctuation_token(
+    Lexer *lexer,
+    size_t start,
+    size_t line,
+    size_t column
+) {
+    char c = advance(lexer);
+
+    if (c == '-' && peek_char(lexer) == '>') {
+        advance(lexer);
+        return make_token(lexer, TOKEN_ARROW, start, line, column);
+    }
+
+    if ((c == '=' || c == '!' || c == '<' || c == '>') && peek_char(lexer) == '=') {
+        advance(lexer);
+        TokenType type;
+        if (c == '=') {
+            type = TOKEN_EQUAL_EQUAL;
+        } else if (c == '!') {
+            type = TOKEN_BANG_EQUAL;
+        } else if (c == '<') {
+            type = TOKEN_LESS_EQUAL;
+        } else {
+            type = TOKEN_GREATER_EQUAL;
+        }
+        return make_token(lexer, type, start, line, column);
+    }
+
+    TokenType type;
+    switch (c) {
+        case '+': type = TOKEN_PLUS; break;
+        case '-': type = TOKEN_MINUS; break;
+        case '*': type = TOKEN_STAR; break;
+        case '/': type = TOKEN_SLASH; break;
+        case '%': type = TOKEN_PERCENT; break;
+        case '=': type = TOKEN_ASSIGN; break;
+        case '!': type = TOKEN_BANG; break;
+        case '<': type = TOKEN_LESS; break;
+        case '>': type = TOKEN_GREATER; break;
+        case '(': type = TOKEN_LEFT_PAREN; break;
+        case ')': type = TOKEN_RIGHT_PAREN; break;
+        case '[': type = TOKEN_LEFT_BRACKET; break;
+        case ']': type = TOKEN_RIGHT_BRACKET; break;
+        case '{': type = TOKEN_LEFT_BRACE; break;
+        case '}': type = TOKEN_RIGHT_BRACE; break;
+        case ',': type = TOKEN_COMMA; break;
+        case '.': type = TOKEN_DOT; break;
+        case ':': type = TOKEN_COLON; break;
+        default: return error_token(lexer, start, line, column);
+    }
+    return make_token(lexer, type, start, line, column);
+}
+
+/*
+ * Called only while at_line_start is true. Consumes the leading whitespace and
+ * decides whether the line begins a block (INDENT), ends one (DEDENTs), or
+ * continues at the current level. Blank and comment-only lines never change
+ * the indentation stack and are skipped entirely.
+ */
+static Token indentation_token(Lexer *lexer) {
+    size_t start = lexer->position;
+    size_t line = lexer->line;
+    size_t column = lexer->column;
+
+    unsigned int spaces = 0;
+    while (peek_char(lexer) == ' ' || peek_char(lexer) == '\t') {
+        spaces += advance(lexer) == '\t' ? 4U : 1U;
+    }
+
+    if (peek_char(lexer) == '#' || peek_char(lexer) == '\n' ||
+        peek_char(lexer) == '\r' || at_end(lexer)) {
+        while (!at_end(lexer) && peek_char(lexer) != '\n') {
+            advance(lexer);
+        }
+        lexer->at_line_start = false;
+        return lexer_next(lexer);
+    }
+
+    unsigned int current_indent = lexer->indent_stack[lexer->indent_depth];
+    lexer->at_line_start = false;
+
+    if (spaces > current_indent) {
+        if (lexer->indent_depth + 1 >= FEM_MAX_INDENT_DEPTH) {
+            return error_token(lexer, start, line, column);
+        }
+        lexer->indent_stack[++lexer->indent_depth] = spaces;
+        return make_token(lexer, TOKEN_INDENT, start, line, column);
+    }
+
+    if (spaces < current_indent) {
+        while (lexer->indent_depth > 0 &&
+               spaces < lexer->indent_stack[lexer->indent_depth]) {
+            lexer->indent_depth--;
+            lexer->pending_dedents++;
+        }
+        if (spaces != lexer->indent_stack[lexer->indent_depth]) {
+            return error_token(lexer, start, line, column);
+        }
+        if (lexer->pending_dedents > 0) {
+            lexer->pending_dedents--;
+            return make_token(lexer, TOKEN_DEDENT, start, line, column);
+        }
+    }
+
+    return lexer_next(lexer);
+}
+
+void lexer_init(Lexer *lexer, const char *source, size_t length) {
+    memset(lexer, 0, sizeof(*lexer));
+    lexer->source = source;
+    lexer->length = length;
+    lexer->line = 1;
+    lexer->column = 1;
+    lexer->at_line_start = true;
+}
+
+Token lexer_next(Lexer *lexer) {
+    if (lexer->pending_dedents > 0) {
+        lexer->pending_dedents--;
+        return make_token(lexer, TOKEN_DEDENT, lexer->position,
+                          lexer->line, lexer->column);
+    }
+
+    if (lexer->at_line_start) {
+        return indentation_token(lexer);
+    }
+
+    while (!at_end(lexer)) {
+        char c = peek_char(lexer);
+        if (c == ' ' || c == '\t' || c == '\r') {
+            advance(lexer);
+            continue;
+        }
+        if (c == '#') {
+            while (!at_end(lexer) && peek_char(lexer) != '\n') {
+                advance(lexer);
+            }
+            continue;
+        }
+        break;
+    }
+
+    if (at_end(lexer)) {
+        if (lexer->indent_depth > 0 && !lexer->emitted_eof) {
+            lexer->emitted_eof = true;
+            lexer->pending_dedents = lexer->indent_depth;
+            lexer->indent_depth = 0;
+            return lexer_next(lexer);
+        }
+        lexer->emitted_eof = true;
+        return make_token(lexer, TOKEN_EOF, lexer->position,
+                          lexer->line, lexer->column);
+    }
+
+    size_t start = lexer->position;
+    size_t line = lexer->line;
+    size_t column = lexer->column;
+    char c = peek_char(lexer);
+
+    if (c == '\n') {
+        advance(lexer);
+        return make_token(lexer, TOKEN_NEWLINE, start, line, column);
+    }
+    if (is_identifier_start(c)) {
+        return identifier_token(lexer, start, line, column);
+    }
+    if (isdigit((unsigned char)c)) {
+        return number_token(lexer, start, line, column);
+    }
+    if (c == '"') {
+        return string_token(lexer, start, line, column);
+    }
+    return punctuation_token(lexer, start, line, column);
+}

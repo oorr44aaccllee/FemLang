@@ -85,27 +85,33 @@ The current repository is intentionally focused on the lexer/token layer as the 
 
 Current milestone:
 
-- tokenizer foundation complete
-- C11 lexer implementation added
-- command-line tokenization demo available
-- README and project structure initialized
+- tokenizer foundation complete with indentation handling
+- C11 lexer, AST, and parser implemented
+- tree-walking evaluator with immutable (`let`) and mutable (`mut`) bindings
+- safe variable reassignment (deep-copied values, error channel)
+- ownership-safe native C function registry (see docs/ownership.md)
+- command-line interpreter: `./femlang examples/basic.fem`
+- automated regression test suite: `make test`
 
 Planned next milestones:
 
-- expression parser
-- AST definitions
-- tree-walking evaluator
-- bytecode compiler
-- VM execution engine
-- C-native function registration
-- tests and examples
+- comparison operators in the evaluator
+- function declarations and call expressions (wired to the native registry)
+- loops, lists, and standard-library native functions
+- bytecode compiler and VM
 
 ## Build and run
 
 ```bash
 make
-./femlang examples/hello.fem
+./femlang examples/basic.fem    # prints 30
+make test                       # runs the regression suite
+make clean                      # remove build artifacts
 ```
+
+`make asan` builds with `-fsanitize=address,undefined`; the w64devkit toolchain
+used on this machine does not ship the sanitizer runtimes, so build the normal
+targets there (see docs/baseline-validation.md).
 
 ## Repository goals
 

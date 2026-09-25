@@ -4,28 +4,30 @@ This document summarizes the current milestone in development.
 
 ## What is now implemented
 
-The repository includes the core pieces necessary for a minimal working language prototype:
+The repository includes the core pieces necessary for a minimal working language
+prototype:
 
-- lexer tokenization
+- lexer tokenization with indentation handling
 - AST definitions
-- parser for simple declarations and expressions
-- runtime evaluator for basic arithmetic and values
-- command-line execution of a `.fem` file
-- environment model for variable storage
+- parser for declarations, expression statements, assignments, and `if`/`else`
+- runtime tree-walking evaluator
+- command-line execution of a `.fem` file (`src/eval_main.c`)
+- environment model with immutable/mutable bindings and an error channel
+- ownership-safe native C function registry (`src/native.c`, `include/native.h`)
 
-## Minimal supported semantics
+## Supported semantics
 
 The interpreter currently supports:
 
-- integer literals
-- floating-point literals
-- strings
-- booleans
-- `let` / `mut` declarations
-- arithmetic operations
-- comparisons
-- string concatenation
-- basic program evaluation
+- integer literals, float literals, strings, booleans, null
+- `let` (immutable) and `mut` (mutable) declarations
+- reassignment of `mut` bindings (deep-copied values)
+- integer arithmetic with overflow and division-by-zero guards
+- float + float arithmetic
+- string concatenation and equality
+- `if` / `else` control flow
+- unary minus and logical negation
+- error reporting through the environment error channel
 
 ## Example
 
@@ -33,19 +35,17 @@ The interpreter currently supports:
 let x = 10
 let y = 20
 let total = x + y
-print(total)
+total
 ```
 
-This should yield the value `30` once the runtime supports `print` as a native function.
+Running `./femlang` on this file prints `30`.
 
-## Planned next step
+## Not yet implemented
 
-The immediate next milestone is to expand the language with:
+- function calls (including `print`; the evaluator has an `AST_CALL` placeholder)
+- comparison operators `< <= > >=` (they lex and parse; evaluating them
+  currently reports an "integer arithmetic error")
+- lists, loops, `elif`, `try`/`catch`/`finally`, `match`
 
-- real `if` / `else` blocks
-- function declarations and function calls
-- loop support
-- native C function registration
-- a bytecode compiler and VM
-
-This keeps the design honest and incremental, while still giving FemLang a coherent path toward a usable runtime.
+These are the next milestones. The native registry already exists so call
+expressions can be wired to C callbacks without further registry changes.
