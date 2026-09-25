@@ -42,9 +42,11 @@ Behavior:
 - NULL registry / name / function are rejected.
 - `native_registry_free()` is idempotent.
 
-The evaluator will consume this registry once call-expression parsing is
-enabled. Keeping registration separate makes the current baseline easier to test
-and avoids coupling C callbacks to unfinished function syntax.
+The evaluator consumes this registry for call expressions: an identifier that
+is not a user binding but is registered in the environment's registry resolves
+to a `VALUE_NATIVE`, and `f(a, b)` invokes the callback with freshly evaluated
+argument values. Registration stays environment-scoped (`env_native_registry`);
+keep it separate from the parser so the registry remains testable in isolation.
 
 ## Validation commands
 
@@ -70,7 +72,8 @@ on this machine, the sources compile clean under `-fanalyzer` with no findings.
 
 ## Scope boundaries
 
-Not yet implemented: function calls, `print`-style native invocation from FemLang
-source, list literals, loops, and comparison operators `< <= > >=` in the
-evaluator (they lex and parse, and evaluating them currently reports an
-"integer arithmetic error"). Those are the next milestone.
+Not yet implemented: user-defined functions (`fn`), list literals, loops, and
+`elif`. Call expressions, native invocation from FemLang source (`print`), and
+comparison operators `< <= > >=` in the evaluator are implemented since this
+milestone; see the sandbox examples in `examples/calls.fem`. Those are the next
+milestones.

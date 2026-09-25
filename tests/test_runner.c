@@ -187,6 +187,92 @@ static void check_bool_result(const char *source, bool expected) {
     value_free(&run.result);
 }
 
+static void check_float_result(const char *source, double expected) {
+    RunResult run = run_source(source);
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_FLOAT);
+    if (run.result.type == VALUE_FLOAT) {
+        double delta = run.result.as.floating - expected;
+        if (delta < 0.0) {
+            delta = -delta;
+        }
+        CHECK(delta < 1e-9);
+    }
+    value_free(&run.result);
+}
+
+/*
+ * Test natives registered into the environment's registry so call expressions
+ * can be exercised end to end.
+ */
+
+static Value native_add(size_t argument_count, const Value *arguments) {
+    if (argument_count != 2 ||
+        arguments[0].type != VALUE_INT ||
+        arguments[1].type != VALUE_INT) {
+        return value_null();
+    }
+    return value_int(arguments[0].as.integer + arguments[1].as.integer);
+}
+
+static Value native_double(size_t argument_count, const Value *arguments) {
+    if (argument_count != 1 || arguments[0].type != VALUE_INT) {
+        return value_null();
+    }
+    return value_int(arguments[0].as.integer * 2);
+}
+
+static Value native_first_string(size_t argument_count, const Value *arguments) {
+    if (argument_count != 1 || arguments[0].type != VALUE_STRING) {
+        return value_null();
+    }
+    return value_string_copy(arguments[0].as.string);
+}
+
+static void register_test_natives(Environment *env) {
+    FemNativeRegistry *natives = env_native_registry(env);
+    CHECK(native_register(natives, "add", native_add));
+    CHECK(native_register(natives, "double", native_double));
+    CHECK(native_register(natives, "name", native_first_string));
+}
+
+static RunResult run_source_with_natives(const char *source) {
+    RunResult out;
+    out.error[0] = '\0';
+    out.parsed = 0;
+
+    Parser parser;
+    parser_init(&parser, source, strlen(source));
+    AstNode *program = parser_parse(&parser);
+    if (program == NULL) {
+        out.result = value_null();
+        snprintf(out.error, sizeof(out.error), "%s", parser_error(&parser));
+        return out;
+    }
+    out.parsed = 1;
+
+    Environment *env = env_new();
+    if (env == NULL) {
+        out.result = value_null();
+        snprintf(out.error, sizeof(out.error), "out of memory");
+        ast_free(program);
+        return out;
+    }
+
+    register_test_natives(env);
+
+    out.result = eval_ast(env, program);
+    const char *runtime_error = env_error(env);
+    if (runtime_error != NULL) {
+        snprintf(out.error, sizeof(out.error), "%s", runtime_error);
+    }
+
+    env_free(env);
+    ast_free(program);
+    return out;
+}
+
 /*
  * Lexer tests
  */
@@ -527,6 +613,105 @@ static void test_parser_declaration_without_value(void) {
     CHECK(parser.had_error);
 }
 
+static void test_parser_call_empty(void) {
+    Parser parser;
+    AstNode *program = parse_program("f()\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *expr = program->as.block.statements.items[0]->as.expression_statement.expression;
+    CHECK(expr->type == AST_CALL);
+    CHECK(expr->as.call.callee->type == AST_IDENTIFIER);
+    CHECK(strcmp(expr->as.call.callee->as.identifier, "f") == 0);
+    CHECK(expr->as.call.arguments.count == 0);
+    ast_free(program);
+}
+
+static void test_parser_call_arguments(void) {
+    Parser parser;
+    AstNode *program = parse_program("f(1, 2)\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *expr = program->as.block.statements.items[0]->as.expression_statement.expression;
+    CHECK(expr->type == AST_CALL);
+    CHECK(expr->as.call.arguments.count == 2);
+    CHECK(expr->as.call.arguments.items[0]->type == AST_INTEGER);
+    CHECK(expr->as.call.arguments.items[1]->type == AST_INTEGER);
+    ast_free(program);
+}
+
+static void test_parser_call_argument_expression(void) {
+    Parser parser;
+    AstNode *program = parse_program("f(1 + 2, 3)\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *expr = program->as.block.statements.items[0]->as.expression_statement.expression;
+    CHECK(expr->type == AST_CALL);
+    CHECK(expr->as.call.arguments.count == 2);
+    CHECK(expr->as.call.arguments.items[0]->type == AST_BINARY);
+    CHECK(expr->as.call.arguments.items[1]->type == AST_INTEGER);
+    ast_free(program);
+}
+
+static void test_parser_call_precedence(void) {
+    Parser parser;
+    AstNode *program = parse_program("add(1, 2) * 3\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *expr = program->as.block.statements.items[0]->as.expression_statement.expression;
+    CHECK(expr->type == AST_BINARY);
+    CHECK(expr->as.binary.operator_type == TOKEN_STAR);
+    CHECK(expr->as.binary.left->type == AST_CALL);
+    CHECK(expr->as.binary.left->as.call.arguments.count == 2);
+    CHECK(expr->as.binary.right->type == AST_INTEGER);
+    ast_free(program);
+}
+
+static void test_parser_nested_calls(void) {
+    Parser parser;
+    AstNode *program = parse_program("f(g(2))(3)\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *expr = program->as.block.statements.items[0]->as.expression_statement.expression;
+    CHECK(expr->type == AST_CALL);
+    CHECK(expr->as.call.arguments.count == 1);
+    CHECK(expr->as.call.arguments.items[0]->type == AST_INTEGER);
+    CHECK(expr->as.call.callee->type == AST_CALL);
+    CHECK(expr->as.call.callee->as.call.arguments.count == 1);
+    CHECK(expr->as.call.callee->as.call.arguments.items[0]->type == AST_CALL);
+    ast_free(program);
+}
+
+static void test_parser_call_in_declaration(void) {
+    Parser parser;
+    AstNode *program = parse_program("let x = f(2)\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    CHECK(stmt->type == AST_LET);
+    CHECK(stmt->as.declaration.value->type == AST_CALL);
+    CHECK(stmt->as.declaration.value->as.call.arguments.count == 1);
+    ast_free(program);
+}
+
+static void test_parser_call_missing_paren(void) {
+    Parser parser;
+    AstNode *program = parse_program("f(1\n", &parser);
+    CHECK(program == NULL);
+    CHECK(parser.had_error);
+}
+
 /*
  * Evaluator tests
  */
@@ -665,26 +850,175 @@ static void test_eval_undefined_lookup_fails(void) {
     value_free(&run.result);
 }
 
+static void test_eval_call_native(void) {
+    RunResult run = run_source_with_natives("add(2, 3)\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_INT);
+    CHECK(run.result.as.integer == 5);
+    value_free(&run.result);
+}
+
+static void test_eval_call_nested(void) {
+    RunResult run = run_source_with_natives("add(add(1, 2), 3)\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_INT);
+    CHECK(run.result.as.integer == 6);
+    value_free(&run.result);
+}
+
+static void test_eval_call_in_expression(void) {
+    RunResult run = run_source_with_natives("add(2, 3) + 1\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_INT);
+    CHECK(run.result.as.integer == 6);
+    value_free(&run.result);
+}
+
+static void test_eval_call_in_declaration(void) {
+    RunResult run = run_source_with_natives("let x = double(3)\nx\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_INT);
+    CHECK(run.result.as.integer == 6);
+    value_free(&run.result);
+}
+
+static void test_eval_call_value_holding_native(void) {
+    RunResult run = run_source_with_natives("let f = add\nf(10, 1)\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_INT);
+    CHECK(run.result.as.integer == 11);
+    value_free(&run.result);
+}
+
+static void test_eval_call_empty_arguments(void) {
+    RunResult run = run_source_with_natives("add()\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+}
+
+static void test_eval_call_string_argument(void) {
+    RunResult run = run_source_with_natives("name(\"Alex\")\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_STRING);
+    CHECK(strcmp(run.result.as.string, "Alex") == 0);
+    value_free(&run.result);
+}
+
+static void test_eval_call_undefined_callee(void) {
+    RunResult run = run_source_with_natives("missing(1)\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+}
+
+static void test_eval_call_non_function(void) {
+    RunResult run = run_source_with_natives("let x = 5\nx(1)\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+}
+
+static void test_eval_call_argument_error_stops(void) {
+    RunResult run = run_source_with_natives("add(1, nope)\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+}
+
+static void test_eval_ordered_comparisons(void) {
+    check_bool_result("1 < 2\n", true);
+    check_bool_result("2 < 2\n", false);
+    check_bool_result("2 <= 2\n", true);
+    check_bool_result("3 > 2\n", true);
+    check_bool_result("3 >= 4\n", false);
+    check_bool_result("3 >= 3\n", true);
+    check_bool_result("1.5 < 2.5\n", true);
+    check_bool_result("2.0 >= 2.0\n", true);
+    check_bool_result("2 * 2 < 5\n", true);
+    check_bool_result("1 == 1.0\n", false);
+}
+
+static void test_eval_comparison_type_errors(void) {
+    RunResult run = run_source("\"a\" < \"b\"\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+
+    run = run_source("1 < \"a\"\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    value_free(&run.result);
+
+    run = run_source("true > false\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    value_free(&run.result);
+}
+
+static void test_eval_comparison_in_condition(void) {
+    check_int_result("if 1 < 2:\n    1\nelse:\n    2\n", 1);
+    check_int_result("if 3 >= 4:\n    1\nelse:\n    0\n", 0);
+}
+
+static void test_eval_float_remainder(void) {
+    check_float_result("7.5 % 2.0\n", 1.5);
+    check_float_result("-7.5 % 2.0\n", -1.5);
+    check_float_result("100.0 % 30.0\n", 10.0);
+    check_float_result("5.0 % 2.5\n", 0.0);
+}
+
+static void test_eval_float_division_by_zero(void) {
+    RunResult run = run_source("1.0 / 0.0\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+
+    run = run_source("1.5 % 0.0\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+}
+
+static void test_eval_mixed_type_errors(void) {
+    RunResult run = run_source("1 + \"a\"\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+
+    run = run_source("\"a\" - 1\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    value_free(&run.result);
+
+    run = run_source("true + 1\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    value_free(&run.result);
+
+    run = run_source("1 + 1.5\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    value_free(&run.result);
+}
+
 /*
  * Native registry tests
  */
-
-static Value native_add(size_t argument_count, const Value *arguments) {
-    if (argument_count != 2 ||
-        arguments[0].type != VALUE_INT ||
-        arguments[1].type != VALUE_INT) {
-        return value_null();
-    }
-    return value_int(arguments[0].as.integer + arguments[1].as.integer);
-}
-
-static Value native_double(size_t argument_count, const Value *arguments) {
-    (void)argument_count;
-    if (argument_count != 1 || arguments[0].type != VALUE_INT) {
-        return value_null();
-    }
-    return value_int(arguments[0].as.integer * 2);
-}
 
 static void test_native_register_and_lookup(void) {
     FemNativeRegistry registry;
@@ -791,6 +1125,21 @@ static void test_value_ownership(void) {
     CHECK(int_value.type == VALUE_NULL);
 }
 
+static void test_value_native_ownership(void) {
+    Value native = value_native(native_add);
+    CHECK(native.type == VALUE_NATIVE);
+    CHECK(native.as.function == native_add);
+
+    Value clone = value_clone(&native);
+    CHECK(clone.type == VALUE_NATIVE);
+    CHECK(clone.as.function == native_add);
+
+    value_free(&clone);
+    CHECK(clone.type == VALUE_NULL);
+    value_free(&native);
+    CHECK(native.type == VALUE_NULL);
+}
+
 int main(void) {
     /* Lexer */
     test_lexer_keywords();
@@ -824,6 +1173,13 @@ int main(void) {
     test_parser_invalid_declaration();
     test_parser_invalid_assignment();
     test_parser_declaration_without_value();
+    test_parser_call_empty();
+    test_parser_call_arguments();
+    test_parser_call_argument_expression();
+    test_parser_call_precedence();
+    test_parser_nested_calls();
+    test_parser_call_in_declaration();
+    test_parser_call_missing_paren();
 
     /* Evaluator */
     test_eval_let_declaration();
@@ -843,6 +1199,22 @@ int main(void) {
     test_eval_integer_operations();
     test_eval_division_by_zero_fails();
     test_eval_undefined_lookup_fails();
+    test_eval_call_native();
+    test_eval_call_nested();
+    test_eval_call_in_expression();
+    test_eval_call_in_declaration();
+    test_eval_call_value_holding_native();
+    test_eval_call_empty_arguments();
+    test_eval_call_string_argument();
+    test_eval_call_undefined_callee();
+    test_eval_call_non_function();
+    test_eval_call_argument_error_stops();
+    test_eval_ordered_comparisons();
+    test_eval_comparison_type_errors();
+    test_eval_comparison_in_condition();
+    test_eval_float_remainder();
+    test_eval_float_division_by_zero();
+    test_eval_mixed_type_errors();
 
     /* Native registry */
     test_native_register_and_lookup();
@@ -853,6 +1225,7 @@ int main(void) {
 
     /* Value ownership */
     test_value_ownership();
+    test_value_native_ownership();
 
     if (failures != 0) {
         fprintf(stderr, "%d test(s) failed.\n", failures);

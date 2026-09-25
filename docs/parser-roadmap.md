@@ -9,11 +9,14 @@ prototype:
 
 - lexer tokenization with indentation handling
 - AST definitions
-- parser for declarations, expression statements, assignments, and `if`/`else`
+- parser for declarations, expression statements, assignments, calls,
+  and `if`/`else`
 - runtime tree-walking evaluator
 - command-line execution of a `.fem` file (`src/eval_main.c`)
 - environment model with immutable/mutable bindings and an error channel
 - ownership-safe native C function registry (`src/native.c`, `include/native.h`)
+- call expressions (`f(...)`) evaluated through the native registry, bundled
+  `print` native
 
 ## Supported semantics
 
@@ -23,8 +26,12 @@ The interpreter currently supports:
 - `let` (immutable) and `mut` (mutable) declarations
 - reassignment of `mut` bindings (deep-copied values)
 - integer arithmetic with overflow and division-by-zero guards
-- float + float arithmetic
+- float arithmetic, including remainder (`%`, truncated like C)
 - string concatenation and equality
+- ordered comparisons `< <= > >=` on numbers (booleans; other types are a
+  runtime error)
+- `==` / `!=` on any two values of the same type (different types are unequal)
+- native function call expressions with own-value argument passing
 - `if` / `else` control flow
 - unary minus and logical negation
 - error reporting through the environment error channel
@@ -35,17 +42,19 @@ The interpreter currently supports:
 let x = 10
 let y = 20
 let total = x + y
-total
+print(total)
 ```
 
-Running `./femlang` on this file prints `30`.
+Running `./femlang` on this file prints `30` (via `print`).
+
+See also: `examples/calls.fem` (calls, comparisons, remainder).
 
 ## Not yet implemented
 
-- function calls (including `print`; the evaluator has an `AST_CALL` placeholder)
-- comparison operators `< <= > >=` (they lex and parse; evaluating them
-  currently reports an "integer arithmetic error")
+- user-defined functions (`fn`): `TOKEN_FN` is lexed but has no AST or
+  evaluator support yet; only native callbacks are callable today
 - lists, loops, `elif`, `try`/`catch`/`finally`, `match`
+- string and list indexing
 
-These are the next milestones. The native registry already exists so call
-expressions can be wired to C callbacks without further registry changes.
+These are the next milestones. `fn` definitions build directly on the
+call-expression machinery landed with the native registry.

@@ -10,9 +10,9 @@
  * Native C function registry
  * --------------------------
  *
- * The registry maps names to plain C callbacks. It is deliberately
- * independent of the FemLang call-expression syntax, which is not implemented
- * yet, so it is directly testable in isolation.
+ * FemNativeFunction (a C callback type) is defined in value.h; a registry
+ * maps plain C callbacks to names. It is usable both directly and through the
+ * environment once call expressions are wired up.
  *
  *   - native_register() copies the name; the registry owns the copy.
  *   - Registering an existing name replaces the previous function and keeps
@@ -22,8 +22,6 @@
  *   - native_registry_free() releases every copied name and can be called on
  *     an already-initialized/freed registry (it re-initializes).
  */
-
-typedef Value (*FemNativeFunction)(size_t argument_count, const Value *arguments);
 
 typedef struct {
     char *name;

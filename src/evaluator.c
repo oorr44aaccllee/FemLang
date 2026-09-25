@@ -1,5 +1,6 @@
 #include "evaluator.h"
 
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +29,11 @@ Value value_int(int64_t integer) {
 
 Value value_float(double floating) {
     Value value = {VALUE_FLOAT, {.floating = floating}};
+    return value;
+}
+
+Value value_native(FemNativeFunction function) {
+    Value value = {VALUE_NATIVE, {.function = function}};
     return value;
 }
 
@@ -92,6 +98,8 @@ bool value_truthy(const Value *value) {
             return value->as.floating != 0.0;
         case VALUE_STRING:
             return value->as.string != NULL && value->as.string[0] != '\0';
+        case VALUE_NATIVE:
+            return false;
     }
     return false;
 }
@@ -130,6 +138,9 @@ void print_value(const Value *value) {
             }
             putchar('"');
             break;
+        case VALUE_NATIVE:
+            fputs("<native function>", stdout);
+            break;
     }
 }
 
@@ -150,6 +161,7 @@ typedef struct Entry {
 
 struct Environment {
     Entry *head;
+    FemNativeRegistry natives;
     char error_message[256];
 };
 
@@ -180,7 +192,11 @@ static Entry *env_find(Environment *env, const char *name) {
 }
 
 Environment *env_new(void) {
-    return calloc(1, sizeof(Environment));
+    Environment *env = calloc(1, sizeof(Environment));
+    if (env != NULL) {
+        native_registry_init(&env->natives);
+    }
+    return env;
 }
 
 void env_free(Environment *env) {
@@ -195,7 +211,12 @@ void env_free(Environment *env) {
         free(entry);
         entry = next;
     }
+    native_registry_free(&env->natives);
     free(env);
+}
+
+FemNativeRegistry *env_native_registry(Environment *env) {
+    return env != NULL ? &env->natives : NULL;
 }
 
 bool env_define(Environment *env, const char *name, const Value *value, bool mutable) {
@@ -325,6 +346,23 @@ static bool int_multiply(int64_t a, int64_t b, int64_t *out) {
     return true;
 }
 
+static const char *operator_symbol(TokenType type) {
+    switch (type) {
+        case TOKEN_PLUS: return "+";
+        case TOKEN_MINUS: return "-";
+        case TOKEN_STAR: return "*";
+        case TOKEN_SLASH: return "/";
+        case TOKEN_PERCENT: return "%";
+        case TOKEN_EQUAL_EQUAL: return "==";
+        case TOKEN_BANG_EQUAL: return "!=";
+        case TOKEN_LESS: return "<";
+        case TOKEN_LESS_EQUAL: return "<=";
+        case TOKEN_GREATER: return ">";
+        case TOKEN_GREATER_EQUAL: return ">=";
+        default: return "?";
+    }
+}
+
 static Value eval(Environment *env, const AstNode *node) {
     if (node == NULL || env_error(env) != NULL) {
         return value_null();
@@ -348,11 +386,16 @@ static Value eval(Environment *env, const AstNode *node) {
 
         case AST_IDENTIFIER: {
             Value *stored = env_lookup(env, node->as.identifier);
-            if (stored == NULL) {
-                env_record_errorf(env, "undefined variable '%s'", node->as.identifier);
-                return value_null();
+            if (stored != NULL) {
+                return value_clone(stored);
             }
-            return value_clone(stored);
+            FemNativeFunction function =
+                native_lookup(&env->natives, node->as.identifier);
+            if (function != NULL) {
+                return value_native(function);
+            }
+            env_record_errorf(env, "undefined variable '%s'", node->as.identifier);
+            return value_null();
         }
 
         case AST_LET: {
@@ -410,6 +453,11 @@ static Value eval(Environment *env, const AstNode *node) {
             }
             if (node->as.unary.operator_type == TOKEN_MINUS &&
                 operand.type == VALUE_INT) {
+                if (operand.as.integer == INT64_MIN) {
+                    value_free(&operand);
+                    env_record_error(env, "integer arithmetic error");
+                    return value_null();
+                }
                 operand.as.integer = -operand.as.integer;
                 return operand;
             }
@@ -459,6 +507,32 @@ static Value eval(Environment *env, const AstNode *node) {
                 return value_bool(op == TOKEN_EQUAL_EQUAL ? equal : !equal);
             }
 
+            if (op == TOKEN_LESS || op == TOKEN_LESS_EQUAL ||
+                op == TOKEN_GREATER || op == TOKEN_GREATER_EQUAL) {
+                bool result = false;
+                bool numeric = false;
+                if (left.type == VALUE_INT && right.type == VALUE_INT) {
+                    result = op == TOKEN_LESS ? left.as.integer < right.as.integer
+                           : op == TOKEN_LESS_EQUAL ? left.as.integer <= right.as.integer
+                           : op == TOKEN_GREATER ? left.as.integer > right.as.integer
+                           : left.as.integer >= right.as.integer;
+                    numeric = true;
+                } else if (left.type == VALUE_FLOAT && right.type == VALUE_FLOAT) {
+                    result = op == TOKEN_LESS ? left.as.floating < right.as.floating
+                           : op == TOKEN_LESS_EQUAL ? left.as.floating <= right.as.floating
+                           : op == TOKEN_GREATER ? left.as.floating > right.as.floating
+                           : left.as.floating >= right.as.floating;
+                    numeric = true;
+                }
+                value_free(&left);
+                value_free(&right);
+                if (numeric) {
+                    return value_bool(result);
+                }
+                env_record_error(env, "comparison requires two numbers");
+                return value_null();
+            }
+
             if (left.type == VALUE_STRING && right.type == VALUE_STRING &&
                 op == TOKEN_PLUS) {
                 size_t left_length = strlen(left.as.string);
@@ -494,6 +568,7 @@ static Value eval(Environment *env, const AstNode *node) {
                         break;
                     case TOKEN_SLASH:
                         if (right.as.integer == 0) {
+                            env_record_error(env, "division by zero");
                             ok = false;
                         } else if (left.as.integer == INT64_MIN && right.as.integer == -1) {
                             ok = false;
@@ -503,6 +578,7 @@ static Value eval(Environment *env, const AstNode *node) {
                         break;
                     case TOKEN_PERCENT:
                         if (right.as.integer == 0) {
+                            env_record_error(env, "division by zero");
                             ok = false;
                         } else if (left.as.integer == INT64_MIN && right.as.integer == -1) {
                             result = 0;
@@ -537,7 +613,20 @@ static Value eval(Environment *env, const AstNode *node) {
                         result = left.as.floating * right.as.floating;
                         break;
                     case TOKEN_SLASH:
-                        result = left.as.floating / right.as.floating;
+                        if (right.as.floating == 0.0) {
+                            env_record_error(env, "division by zero");
+                            ok = false;
+                        } else {
+                            result = left.as.floating / right.as.floating;
+                        }
+                        break;
+                    case TOKEN_PERCENT:
+                        if (right.as.floating == 0.0) {
+                            env_record_error(env, "division by zero");
+                            ok = false;
+                        } else {
+                            result = fmod(left.as.floating, right.as.floating);
+                        }
                         break;
                     default:
                         ok = false;
@@ -545,18 +634,65 @@ static Value eval(Environment *env, const AstNode *node) {
                 }
                 value_free(&left);
                 value_free(&right);
-                return ok ? value_float(result) : value_null();
+                if (ok) {
+                    return value_float(result);
+                }
+                return value_null();
             }
 
-            /* Unsupported operation or mixed operand types. */
+            /* Unsupported operator or incompatible operand types. */
+            {
+                char message[128];
+                snprintf(message, sizeof(message),
+                         "cannot apply operator '%s' to these values",
+                         operator_symbol(op));
+                env_record_error(env, message);
+            }
             value_free(&left);
             value_free(&right);
             return value_null();
         }
 
-        case AST_CALL:
-            /* Call expressions are not executable in this milestone. */
-            return value_null();
+        case AST_CALL: {
+            Value callee = eval(env, node->as.call.callee);
+            if (callee.type != VALUE_NATIVE) {
+                value_free(&callee);
+                env_record_error(env, "attempt to call a non-function value");
+                return value_null();
+            }
+            FemNativeFunction function = callee.as.function;
+            value_free(&callee);
+
+            size_t count = node->as.call.arguments.count;
+            Value *arguments = NULL;
+            if (count > 0) {
+                arguments = malloc(count * sizeof(*arguments));
+                if (arguments == NULL) {
+                    env_record_error(env, "out of memory");
+                    return value_null();
+                }
+            }
+
+            size_t evaluated = 0;
+            for (size_t i = 0; i < count; i++) {
+                Value argument = eval(env, node->as.call.arguments.items[i]);
+                if (env_error(env) != NULL) {
+                    for (size_t j = 0; j < evaluated; j++) {
+                        value_free(&arguments[j]);
+                    }
+                    free(arguments);
+                    return value_null();
+                }
+                arguments[evaluated++] = argument;
+            }
+
+            Value result = function(count, arguments);
+            for (size_t i = 0; i < evaluated; i++) {
+                value_free(&arguments[i]);
+            }
+            free(arguments);
+            return result;
+        }
 
         case AST_LIST:
             return value_null();

@@ -169,6 +169,93 @@ static AstNode *primary(Parser *parser) {
     return NULL;
 }
 
+/*
+ * Parses a parenthesized argument list (the opening '(' has already been
+ * consumed) into an AstNodeList. Empty lists are allowed; a trailing comma is
+ * rejected by the surrounding expression grammar. On success the closing ')'
+ * has been consumed.
+ */
+static bool parse_arguments(Parser *parser, AstNodeList *arguments) {
+    if (!check(parser, TOKEN_RIGHT_PAREN)) {
+        for (;;) {
+            AstNode *argument = expression(parser);
+            if (argument == NULL) {
+                return false;
+            }
+            if (!ast_list_push(arguments, argument)) {
+                ast_free(argument);
+                return false;
+            }
+            if (!match(parser, TOKEN_COMMA)) {
+                break;
+            }
+        }
+    }
+
+    if (!match(parser, TOKEN_RIGHT_PAREN)) {
+        error_here(parser, "expected ')' after arguments");
+        return false;
+    }
+    return true;
+}
+
+/*
+ * A call expression: a primary followed by any number of parenthesized
+ * argument lists. Postfix calls bind tighter than unary and binary operators,
+ * so `f(1) + 2` is (f(1)) + 2.
+ */
+static AstNode *call(Parser *parser) {
+    AstNode *callee = primary(parser);
+
+    while (callee != NULL && check(parser, TOKEN_LEFT_PAREN)) {
+        Token paren = parser->current;
+        advance(parser);
+
+        AstNode *node = ast_new(AST_CALL, paren.line, paren.column);
+        if (node == NULL) {
+            ast_free(callee);
+            return NULL;
+        }
+        node->as.call.callee = callee;
+
+        if (!parse_arguments(parser, &node->as.call.arguments)) {
+            ast_free(node);
+            return NULL;
+        }
+        callee = node;
+    }
+
+    return callee;
+}
+
+/*
+ * Continuation of a call when the callee is already available. Used by
+ * expression statements: the leading identifier was consumed to disambiguate
+ * assignment, and any following '(' must still be folded into a call before
+ * binary operators continue.
+ */
+static AstNode *call_tail(Parser *parser, AstNode *callee) {
+    while (callee != NULL && check(parser, TOKEN_LEFT_PAREN)) {
+        Token paren = parser->current;
+        advance(parser);
+
+        AstNode *node = ast_new(AST_CALL, paren.line, paren.column);
+        if (node == NULL) {
+            ast_free(callee);
+            return NULL;
+        }
+        node->as.call.callee = callee;
+
+        if (!parse_arguments(parser, &node->as.call.arguments)) {
+            ast_free(node);
+            return NULL;
+        }
+        callee = node;
+    }
+
+    return callee;
+}
+
 static AstNode *unary(Parser *parser) {
     if (match(parser, TOKEN_BANG) || match(parser, TOKEN_MINUS)) {
         Token operator_token = parser->previous;
@@ -185,7 +272,7 @@ static AstNode *unary(Parser *parser) {
         node->as.unary.operand = operand;
         return node;
     }
-    return primary(parser);
+    return call(parser);
 }
 
 /*
@@ -489,6 +576,11 @@ static AstNode *expression_statement(Parser *parser) {
         left->as.identifier = copy_identifier(&name);
         if (left->as.identifier == NULL) {
             ast_free(left);
+            return NULL;
+        }
+
+        left = call_tail(parser, left);
+        if (left == NULL) {
             return NULL;
         }
 

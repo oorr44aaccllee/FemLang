@@ -2,6 +2,7 @@
 #define FEMLANG_EVALUATOR_H
 
 #include "ast.h"
+#include "native.h"
 #include "value.h"
 
 #include <stdbool.h>
@@ -13,6 +14,12 @@ typedef struct Environment Environment;
  *   char *name;    heap copy, owned by the environment
  *   Value value;   heap-cloned on define and assign (see value.h)
  *   bool mutable;
+ *
+ * It also owns a FemNativeRegistry. Identifier resolution checks user
+ * bindings first and the native registry second, so a `let` binding shadows a
+ * native function with the same name. env_native_registry() exposes the
+ * registry so the host program can register native functions (e.g. print)
+ * before evaluation.
  *
  * env_define() clones both the name and the value; the caller keeps ownership
  * of its value argument. env_lookup() returns a borrowed pointer into the
@@ -30,6 +37,8 @@ typedef struct Environment Environment;
  */
 Environment *env_new(void);
 void env_free(Environment *env);
+
+FemNativeRegistry *env_native_registry(Environment *env);
 
 bool env_define(
     Environment *env,

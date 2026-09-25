@@ -1,8 +1,23 @@
 #include "evaluator.h"
+#include "native.h"
 #include "parser.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+
+static Value native_print(size_t argument_count, const Value *arguments) {
+    if (argument_count != 1) {
+        return value_null();
+    }
+    const Value *argument = &arguments[0];
+    if (argument->type == VALUE_STRING) {
+        fputs(argument->as.string, stdout);
+    } else {
+        print_value(argument);
+    }
+    putchar('\n');
+    return value_null();
+}
 
 static char *read_source_file(const char *path, size_t *length_out) {
     FILE *file = fopen(path, "rb");
@@ -71,6 +86,8 @@ int main(int argc, char **argv) {
         free(source);
         return EXIT_FAILURE;
     }
+
+    native_register(env_native_registry(env), "print", native_print);
 
     Value result = eval_ast(env, program);
 

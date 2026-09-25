@@ -30,6 +30,9 @@ server) will use.
 - identifier-led expression statements (`a * b + c` parses as `(a * b) + c`);
 - assignment values parse with full expression precedence;
 - `if` / `else` with blocks of multiple statements;
+- call expressions: empty and argument lists, argument expressions, calls as
+  operands (precedence), nested calls (`f(g(2))(3)`), calls in declarations,
+  and a missing closing paren is a parse error;
 - invalid declarations (`let = 5`), missing value (`let x`), and invalid
   assignments (`x =`) are parse errors.
 
@@ -45,8 +48,17 @@ server) will use.
 - string concatenation;
 - `if` / `else` branch selection;
 - integer arithmetic, unary minus, precedence;
-- division by zero reports an error;
-- undefined variable lookup reports an error.
+- division by zero reports an error (integer and float);
+- undefined variable lookup reports an error;
+- native call expressions: basic, nested, in expressions and declarations,
+  calling a native stored in a binding, empty argument lists, string
+  arguments, calling an undefined name or a non-function value, and argument
+  evaluation errors stop the call;
+- ordered comparisons `< <= > >=` on integers/floats (with non-numbers and
+  mixed types reported as errors);
+- float remainder (`%`) and float division-by-zero guards;
+- mixed-type binary operations report an error instead of silently returning
+  null.
 
 ### Native registry
 
@@ -61,7 +73,8 @@ server) will use.
 ### Value ownership
 
 - string copying, deep cloning (clone and original must not share a buffer);
-- `value_free()` on strings, nulls, and already-freed values.
+- `value_free()` on strings, nulls, and already-freed values;
+- native values: borrowed function pointer, shallow clone, free resets to null.
 
 ## Running the tests
 

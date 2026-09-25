@@ -30,12 +30,15 @@ Any value can be a condition and is interpreted through `value_truthy()`:
 integers and floats are false when zero, strings are false when empty, `false`
 and `null` are false, everything else is true.
 
-Note: comparison operators `< <= > >=` are lexed and parsed but not yet
-evaluated; use `==` or `!=` for the current milestone. See
-docs/parser-roadmap.md.
+Comparison operators `< <= > >=` are fully evaluated on two integers or two
+floats and produce a boolean; comparing non-numbers reports
+`comparison requires two numbers`. `==` / `!=` compare any two values of the
+same type (different types are simply not equal).
 
 ## Current limitations
 
-This milestone does not yet implement `elif`, loops, functions, lists, or
-native C function invocation from FemLang source. Reassignment of `mut`
-bindings is implemented and covered in docs/reassignment.md.
+This milestone does not yet implement `elif`, loops, or user-defined
+functions. Native C function invocation from FemLang source is implemented
+(`f(...)`), including the bundled `print` native; see docs/ownership.md for
+argument ownership. Reassignment of `mut` bindings is implemented and covered
+in docs/reassignment.md.

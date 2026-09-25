@@ -79,7 +79,9 @@ The project is organized around a conventional compiler/runtime pipeline:
 - Native C integration
 - runtime memory management
 
-The current repository is intentionally focused on the lexer/token layer as the first important milestone.
+The present milestone implements the lexer, AST, parser, tree-walking
+evaluator, environment model, and native call expressions; bytecode, VM,
+closures, and a standard library remain planned.
 
 ## Project status
 
@@ -90,14 +92,15 @@ Current milestone:
 - tree-walking evaluator with immutable (`let`) and mutable (`mut`) bindings
 - safe variable reassignment (deep-copied values, error channel)
 - ownership-safe native C function registry (see docs/ownership.md)
+- call expressions wired to the native registry, including `print`
+- comparison operators (`< <= > >=`), float remainder, and type-safe errors
 - command-line interpreter: `./femlang examples/basic.fem`
 - automated regression test suite: `make test`
 
 Planned next milestones:
 
-- comparison operators in the evaluator
-- function declarations and call expressions (wired to the native registry)
-- loops, lists, and standard-library native functions
+- function declarations and a small standard library
+- loops and lists
 - bytecode compiler and VM
 
 ## Build and run

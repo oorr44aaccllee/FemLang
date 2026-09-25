@@ -10,6 +10,10 @@ A `Value` struct owns its own heap data and nothing else:
 
 - `VALUE_STRING` owns a single NUL-terminated `char *` allocated with `malloc`.
   The pointer is non-NULL while the value is alive.
+- `VALUE_NATIVE` stores a **borrowed** `FemNativeFunction` pointer (a native
+  callback registered in the environment's registry). The value does not own
+  it: `value_clone()` copies the pointer, `value_free()` only resets the value
+  to `VALUE_NULL`, and the callback stays owned by whoever registered it.
 - Every other type (`VALUE_NULL`, `VALUE_BOOL`, `VALUE_INT`, `VALUE_FLOAT`) owns
   no heap memory.
 
@@ -51,7 +55,11 @@ The first semantic failure is recorded once in the environment:
 - reading an undefined variable: `undefined variable 'x'`
 - allocation failure: `out of memory`
 - integer overflow, division by zero, or `INT64_MIN / -1`:
-  `integer arithmetic error`
+  `integer arithmetic error`, `division by zero`
+- ordering comparisons on non-numbers: `comparison requires two numbers`
+- applying a binary operator to incompatible operands:
+  `cannot apply operator '<op>' to these values`
+- calling a non-function value: `attempt to call a non-function value`
 
 After an error is recorded, every later evaluation returns `VALUE_NULL`
 immediately, so execution does not continue past the first failure. The running
@@ -70,3 +78,24 @@ never silently run with a stale half-updated state.
   return `false`.
 - `native_registry_free()` releases every copied name and re-initializes the
   registry to the empty state, so calling it twice is safe.
+
+## Call-expression ownership
+
+Each environment owns a `FemNativeRegistry` (exposed via
+`env_native_registry()`); `env_free()` releases it. Identifier resolution
+checks user bindings first, then the registry: a registered name resolves to a
+`VALUE_NATIVE` holding the borrowed callback, and a `let` binding shadows a
+native with the same name.
+
+`AST_CALL` evaluation:
+
+1. the callee is evaluated and must be a `VALUE_NATIVE`; otherwise
+   `attempt to call a non-function value` is recorded;
+2. every argument is evaluated left to right into a temporary array that the
+   call owns for the duration of the call;
+3. the callback receives `(count, args)` and must treat the array as
+   borrowed — the evaluator frees each argument value (deep-freed for strings)
+   and the array right after the call returns; the callback owns only the
+   `Value` it returns;
+4. if any argument evaluation fails, already-evaluated arguments are released
+   and the call returns `VALUE_NULL`.

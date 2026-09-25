@@ -129,6 +129,29 @@ from source inspection:
 | `fn`, `elif`, `for`, `in`, `while`, `break`, `continue`, `try`, `catch`, `finally`, `match` all lex but have no AST, parser branch, or evaluator handling; using them today is a parse error. `TOKEN_FN` and `TOKEN_ELIF` are therefore dead outside the lexer. | `include/token.h`, `src/lexer.c`, `src/parser.c` | Phases 5 (fn) and 8-13. |
 | Mixed-type binary operations and string vs non-string comparisons evaluate to null without a diagnostic in several paths. | `src/evaluator.c` | Cosmetic; should become a proper type-error message. |
 
+## Phase 5 resolution (2026-09-25)
+
+Phase 5 (call expressions) resolved several entries above; this section
+records the disposition:
+
+| Audit entry | Disposition in Phase 5 |
+| --- | --- |
+| `AST_CALL` dead (never parsed; evaluator returned null) | **Resolved.** Parser builds `AST_CALL` (postfix `call`/`call_tail`, `parse_arguments` in `src/parser.c`); evaluator invokes the registry (`src/evaluator.c` `case AST_CALL`). |
+| Call expressions not wired to the registry | **Resolved.** `Environment` owns a `FemNativeRegistry` (`env_native_registry()`); identifiers resolve to `VALUE_NATIVE` after env miss; `VALUE_NATIVE` added to `include/value.h` (borrowed callback pointer). |
+| Comparisons `< <= > >=` unhandled | **Resolved.** Ordered comparisons on two ints or two floats return bool; other types report `comparison requires two numbers`. |
+| Float `%` returns null silently | **Resolved.** Float remainder via `fmod` (truncated, sign of dividend); both float `/` and `%` by `0.0` report `division by zero`. |
+| Unary `-` on `INT64_MIN` unguarded | **Resolved.** Guarded: reports `integer arithmetic error` (still unreachable via literals, now safe for sanitizers). |
+| Mixed-type binary ops silent null | **Resolved (inconsistent path).** Unsupported/mixed ops report `cannot apply operator '<op>' to these values`; `==`/`!=` on different types still returns false by design. |
+| `fn`, `elif`, loops, `try`/`match` lexed but dead | **Unchanged.** `TOKEN_FN` is the Phase 7 target; everything else follows Phases 8-11. |
+| `AST_LIST` dead | **Unchanged.** Phase 10. |
+| Int division-by-zero error text | **Changed.** Int `/` and `%` by zero now report `division by zero` (was folded into `integer arithmetic error`). |
+
+New public surface from Phase 5: `VALUE_NATIVE`, `value_native()`,
+`env_native_registry()`; bundled `print` native registered in `src/eval_main.c`;
+example `examples/calls.fem`. Since this phase the evaluator also reports a
+`Runtime error:` text for every failing program instead of silently printing
+`null` for several operator cases.
+
 ## Ownership model concerns
 
 Design (documented in `docs/ownership.md` and `docs/baseline-validation.md`):
