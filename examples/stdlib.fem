@@ -1,0 +1,22 @@
+# Standard library quick tour
+print("hello, world")
+print("1 + 2 =", 1 + 2)
+
+let quote = "FemLang"
+print("len:", len(quote))
+
+print("int(3.9) =", int(3.9))
+print("int(-3.9) =", int(-3.9))
+print("int(true) =", int(true))
+
+print("float(7) =", float(7))
+print("float(false) =", float(false))
+
+print("str():", str(42), str(3.5), str(true), str(null))
+
+print("type(1) =", type(1))
+print("type(1.5) =", type(1.5))
+print("type(true) =", type(true))
+print("type(\"x\") =", type("x"))
+print("type(null) =", type(null))
+print("type(print) =", type(print))

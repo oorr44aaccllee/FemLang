@@ -73,7 +73,8 @@ on this machine, the sources compile clean under `-fanalyzer` with no findings.
 ## Scope boundaries
 
 Not yet implemented: user-defined functions (`fn`), list literals, loops, and
-`elif`. Call expressions, native invocation from FemLang source (`print`), and
-comparison operators `< <= > >=` in the evaluator are implemented since this
-milestone; see the sandbox examples in `examples/calls.fem`. Those are the next
-milestones.
+`elif`. Call expressions, native invocation from FemLang source (`print`),
+comparison operators `< <= > >=` in the evaluator, and the native standard
+library (`print`, `len`, `int`, `float`, `str`, `type` — see
+`examples/stdlib.fem` and `docs/stdlib.md`) are implemented since this and the
+following milestones. Those are the next milestones.

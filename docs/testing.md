@@ -2,9 +2,9 @@
 
 This directory contains the automated regression tests for the language core.
 The runner is `tests/test_runner.c`, a single self-contained C program that
-exercises the public lexer, parser, AST, evaluator, and native-registry
-interfaces — the same interfaces future tools (such as a VS Code language
-server) will use.
+exercises the public lexer, parser, AST, evaluator, native-registry, and
+standard-library (builtins) interfaces �?" the same interfaces future tools
+(such as a VS Code language server) will use.
 
 ## Covered areas
 
@@ -58,7 +58,24 @@ server) will use.
   mixed types reported as errors);
 - float remainder (`%`) and float division-by-zero guards;
 - mixed-type binary operations report an error instead of silently returning
-  null.
+  null;
+- `VALUE_ERROR` propagation: a native returning `value_error("boom")` stops the
+  program with that message through the error channel, even when the call is
+  an operand of a larger expression.
+
+### Standard library
+
+- `len`: byte length of strings (including the empty string); arity and
+  type errors (`len(42)`, `len()`);
+- `int`: float truncation toward zero, bool conversion, integer passthrough;
+  non-numeric, wrong-arity, and out-of-range arguments are errors;
+- `float`: integer/bool/float conversion; type and arity errors;
+- `str`: display form of integers, floats, booleans, null, and identity for
+  strings;
+- `type`: `"int"`, `"float"`, `"bool"`, `"string"`, `"null"`, `"native"`;
+  arity errors;
+- `print`: success paths (zero or more arguments, mixed types) return null
+  with no error.
 
 ### Native registry
 
@@ -74,7 +91,11 @@ server) will use.
 
 - string copying, deep cloning (clone and original must not share a buffer);
 - `value_free()` on strings, nulls, and already-freed values;
-- native values: borrowed function pointer, shallow clone, free resets to null.
+- native values: borrowed function pointer, shallow clone, free resets to null;
+- error values: owned message, deep clone (distinct buffers), free resets to
+  null;
+- `value_to_string()`: display form of every value type, including raw string
+  identity (distinct buffer) and the null-argument case.
 
 ## Running the tests
 

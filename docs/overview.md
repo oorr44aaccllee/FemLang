@@ -2,11 +2,21 @@
 
 This document summarizes the short-term direction for the language and the current repository milestone.
 
-## Current focus
+## Current status
 
-The repo currently contains the core token + lexer foundation in C11, with a simple command-line tool that reads a source file and prints the produced tokens.
+> Status note (Phase 6): this file retains the longer-term roadmap; the
+> current-milestone detail lives in `docs/parser-roadmap.md` and
+> `docs/stdlib.md`. A full rewrite of this page is deferred until the
+> parser/evaluator surface stabilizes (see `docs/repository-audit.md`).
 
-This is the first and most important engineering milestone because the parser and runtime will depend on the token stream being reliable.
+The repo now contains the C11 lexer, AST, parser, and a tree-walking
+evaluator with immutable/mutable bindings, an error channel, call expressions
+through a native registry, and a small native standard library
+(`print`, `len`, `int`, `float`, `str`, `type`). The CLI runs `.fem` files:
+`./femlang examples/basic.fem`.
+
+The lexer is the load-bearing foundation: the parser and runtime depend on the
+token stream being reliable, so it still gets the most thorough test coverage.
 
 ## Minimal first release target
 

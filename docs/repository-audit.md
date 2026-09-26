@@ -203,6 +203,20 @@ Dependency-driven, cheap-first:
 Original roadmap items 1-4 of `docs/overview.md` (tokenizer tests, parser/AST
 definitions, tree-walking evaluator) are complete; items 4-8 are Future Work.
 
+Phase 5 (2026-09-25, branch `phase-05-call-expressions`, commit `4496cf0`)
+landed call expressions per step 1 and folded in the quick semantic fixes
+(ordered comparisons, float `%`, `INT64_MIN` guard, mixed-type errors).
+
+Phase 6 (2026-09-25, branch `phase-06-stdlib`) landed the native standard
+library per step 2's library half: `print`, `len`, `int`, `float`, `str`,
+`type` registered via `fem_stdlib_register()` (`src/builtins.c`), the new
+transient `VALUE_ERROR` value type so natives report errors through the
+environment channel, and the public `value_to_string()` display helper.
+The step-2 CLI triage (`femlang tokens | ast | run`) and `docs/overview.md`
+rewrite were intentionally deferred: `overview.md` got a light current-state
+refresh, and the CLI subcommands stay out of scope until the parser/evaluator
+surface stabilizes further.
+
 ## Evidence (this session)
 
 - `make clean && make && make test` → `All FemLang tests passed.` (exit 0).

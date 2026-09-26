@@ -3,8 +3,8 @@ CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude
 LDFLAGS ?=
 TARGET = femlang
 TEST_TARGET = femlang-tests
-SRC = src/eval_main.c src/evaluator.c src/parser.c src/ast.c src/lexer.c src/token.c src/native.c
-TEST_SRC = tests/test_runner.c src/evaluator.c src/parser.c src/ast.c src/lexer.c src/token.c src/native.c
+SRC = src/eval_main.c src/evaluator.c src/parser.c src/ast.c src/lexer.c src/token.c src/native.c src/builtins.c
+TEST_SRC = tests/test_runner.c src/evaluator.c src/parser.c src/ast.c src/lexer.c src/token.c src/native.c src/builtins.c
 OBJ = $(SRC:.c=.o)
 TEST_OBJ = $(TEST_SRC:.c=.o)
 

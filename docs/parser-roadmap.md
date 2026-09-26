@@ -15,8 +15,10 @@ prototype:
 - command-line execution of a `.fem` file (`src/eval_main.c`)
 - environment model with immutable/mutable bindings and an error channel
 - ownership-safe native C function registry (`src/native.c`, `include/native.h`)
-- call expressions (`f(...)`) evaluated through the native registry, bundled
-  `print` native
+- call expressions (`f(...)`) evaluated through the native registry,
+  bundled `print` native
+- native standard library (`src/builtins.c`, `include/builtins.h`):
+  `print`, `len`, `int`, `float`, `str`, `type`, with `VALUE_ERROR` reporting
 
 ## Supported semantics
 
@@ -47,7 +49,10 @@ print(total)
 
 Running `./femlang` on this file prints `30` (via `print`).
 
-See also: `examples/calls.fem` (calls, comparisons, remainder).
+See also:
+- `examples/calls.fem` (calls, comparisons, remainder);
+- `examples/stdlib.fem` (standard library tour);
+- `docs/stdlib.md` for the native standard library reference.
 
 ## Not yet implemented
 
@@ -57,4 +62,6 @@ See also: `examples/calls.fem` (calls, comparisons, remainder).
 - string and list indexing
 
 These are the next milestones. `fn` definitions build directly on the
-call-expression machinery landed with the native registry.
+call-expression machinery landed with the native registry; the standard
+library (this milestone) is itself native callbacks and will later be
+supplemented by `fn`-based library code.

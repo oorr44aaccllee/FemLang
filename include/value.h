@@ -11,6 +11,11 @@
  *
  *   - VALUE_STRING owns a single NUL-terminated char* allocated with malloc.
  *     The string may be NULL only when the Value itself is empty/invalid.
+ *   - VALUE_ERROR owns its message the same way VALUE_STRING owns its bytes.
+ *     It is a transient control value: native callbacks return it to report a
+ *     runtime error instead of silently returning null. The evaluator turns a
+ *     returned VALUE_ERROR into an environment error message and never lets it
+ *     reach a binding.
  *   - VALUE_NATIVE stores a borrowed FemNativeFunction pointer: the Value does
  *     not own it, value_clone() copies the pointer, and value_free() only
  *     resets the Value to VALUE_NULL.
@@ -33,7 +38,8 @@ typedef enum {
     VALUE_INT,
     VALUE_FLOAT,
     VALUE_STRING,
-    VALUE_NATIVE
+    VALUE_NATIVE,
+    VALUE_ERROR
 } ValueType;
 
 typedef struct Value Value;
@@ -62,6 +68,8 @@ Value value_int(int64_t value);
 Value value_float(double value);
 Value value_string_copy(const char *source);
 Value value_native(FemNativeFunction function);
+Value value_error(const char *message);
+Value value_to_string(const Value *value);
 Value value_clone(const Value *value);
 void value_free(Value *value);
 bool value_truthy(const Value *value);

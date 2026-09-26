@@ -1,3 +1,4 @@
+#include "builtins.h"
 #include "ast.h"
 #include "evaluator.h"
 #include "lexer.h"
@@ -121,7 +122,9 @@ typedef struct {
     int parsed;
 } RunResult;
 
-static RunResult run_source(const char *source) {
+typedef void (*EnvSetupFn)(Environment *env);
+
+static RunResult run_source_with_setup(const char *source, EnvSetupFn setup) {
     RunResult out;
     out.error[0] = '\0';
     out.parsed = 0;
@@ -144,6 +147,10 @@ static RunResult run_source(const char *source) {
         return out;
     }
 
+    if (setup != NULL) {
+        setup(env);
+    }
+
     out.result = eval_ast(env, program);
     const char *runtime_error = env_error(env);
     if (runtime_error != NULL) {
@@ -153,6 +160,10 @@ static RunResult run_source(const char *source) {
     env_free(env);
     ast_free(program);
     return out;
+}
+
+static RunResult run_source(const char *source) {
+    return run_source_with_setup(source, NULL);
 }
 
 static AstNode *parse_program(const char *source, Parser *out_parser) {
@@ -230,47 +241,30 @@ static Value native_first_string(size_t argument_count, const Value *arguments) 
     return value_string_copy(arguments[0].as.string);
 }
 
+static Value native_boom(size_t argument_count, const Value *arguments) {
+    (void)argument_count;
+    (void)arguments;
+    return value_error("boom");
+}
+
 static void register_test_natives(Environment *env) {
     FemNativeRegistry *natives = env_native_registry(env);
     CHECK(native_register(natives, "add", native_add));
     CHECK(native_register(natives, "double", native_double));
     CHECK(native_register(natives, "name", native_first_string));
+    CHECK(native_register(natives, "boom", native_boom));
+}
+
+static void register_stdlib(Environment *env) {
+    fem_stdlib_register(env_native_registry(env));
 }
 
 static RunResult run_source_with_natives(const char *source) {
-    RunResult out;
-    out.error[0] = '\0';
-    out.parsed = 0;
+    return run_source_with_setup(source, register_test_natives);
+}
 
-    Parser parser;
-    parser_init(&parser, source, strlen(source));
-    AstNode *program = parser_parse(&parser);
-    if (program == NULL) {
-        out.result = value_null();
-        snprintf(out.error, sizeof(out.error), "%s", parser_error(&parser));
-        return out;
-    }
-    out.parsed = 1;
-
-    Environment *env = env_new();
-    if (env == NULL) {
-        out.result = value_null();
-        snprintf(out.error, sizeof(out.error), "out of memory");
-        ast_free(program);
-        return out;
-    }
-
-    register_test_natives(env);
-
-    out.result = eval_ast(env, program);
-    const char *runtime_error = env_error(env);
-    if (runtime_error != NULL) {
-        snprintf(out.error, sizeof(out.error), "%s", runtime_error);
-    }
-
-    env_free(env);
-    ast_free(program);
-    return out;
+static RunResult run_source_with_stdlib(const char *source) {
+    return run_source_with_setup(source, register_stdlib);
 }
 
 /*
@@ -936,6 +930,139 @@ static void test_eval_call_argument_error_stops(void) {
     value_free(&run.result);
 }
 
+static void test_eval_native_error_reports(void) {
+    RunResult run = run_source_with_natives("boom()\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(strcmp(run.error, "boom") == 0);
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+
+    run = run_source_with_natives("boom() + 1\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(strcmp(run.error, "boom") == 0);
+    value_free(&run.result);
+}
+
+/*
+ * Standard library helpers and tests. These run with fem_stdlib_register so
+ * the builtin natives can be exercised through a whole program.
+ */
+
+static void check_stdlib_int(const char *source, int64_t expected) {
+    RunResult run = run_source_with_stdlib(source);
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_INT);
+    CHECK(run.result.as.integer == expected);
+    value_free(&run.result);
+}
+
+static void check_stdlib_float(const char *source, double expected) {
+    RunResult run = run_source_with_stdlib(source);
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_FLOAT);
+    if (run.result.type == VALUE_FLOAT) {
+        double delta = run.result.as.floating - expected;
+        if (delta < 0.0) {
+            delta = -delta;
+        }
+        CHECK(delta < 1e-9);
+    }
+    value_free(&run.result);
+}
+
+static void check_stdlib_string(const char *source, const char *expected) {
+    RunResult run = run_source_with_stdlib(source);
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_STRING);
+    CHECK(expected != NULL && strcmp(run.result.as.string, expected) == 0);
+    value_free(&run.result);
+}
+
+static void check_stdlib_error(const char *source) {
+    RunResult run = run_source_with_stdlib(source);
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+}
+
+static void check_stdlib_null(const char *source) {
+    RunResult run = run_source_with_stdlib(source);
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+}
+
+static void test_stdlib_len(void) {
+    check_stdlib_int("len(\"hello\")\n", 5);
+    check_stdlib_int("len(\"\")\n", 0);
+    check_stdlib_int("let s = \"abc\"\nlen(s)\n", 3);
+    check_stdlib_int("len(str(12345))\n", 5);
+    check_stdlib_error("len(42)\n");
+    check_stdlib_error("len(print)\n");
+    check_stdlib_error("len()\n");
+    check_stdlib_error("len(\"a\", \"b\")\n");
+}
+
+static void test_stdlib_int_conversions(void) {
+    check_stdlib_int("int(3.9)\n", 3);
+    check_stdlib_int("int(-3.9)\n", -3);
+    check_stdlib_int("int(5.0)\n", 5);
+    check_stdlib_int("int(-2.0)\n", -2);
+    check_stdlib_int("int(true)\n", 1);
+    check_stdlib_int("int(false)\n", 0);
+    check_stdlib_int("int(7)\n", 7);
+    check_stdlib_error("int(\"3\")\n");
+    check_stdlib_error("int(null)\n");
+    check_stdlib_error("int(1, 2)\n");
+    check_stdlib_error("int()\n");
+}
+
+static void test_stdlib_float_conversions(void) {
+    check_stdlib_float("float(3)\n", 3.0);
+    check_stdlib_float("float(false)\n", 0.0);
+    check_stdlib_float("float(true)\n", 1.0);
+    check_stdlib_float("float(2.5)\n", 2.5);
+    check_stdlib_error("float(\"x\")\n");
+    check_stdlib_error("float(null)\n");
+    check_stdlib_error("float(1, 2)\n");
+}
+
+static void test_stdlib_str(void) {
+    check_stdlib_string("str(42)\n", "42");
+    check_stdlib_string("str(-7)\n", "-7");
+    check_stdlib_string("str(3.5)\n", "3.5");
+    check_stdlib_string("str(true)\n", "true");
+    check_stdlib_string("str(false)\n", "false");
+    check_stdlib_string("str(null)\n", "null");
+    check_stdlib_string("str(\"x\")\n", "x");
+    check_stdlib_string("str(1 + 2)\n", "3");
+}
+
+static void test_stdlib_type(void) {
+    check_stdlib_string("type(1)\n", "int");
+    check_stdlib_string("type(1.5)\n", "float");
+    check_stdlib_string("type(true)\n", "bool");
+    check_stdlib_string("type(\"s\")\n", "string");
+    check_stdlib_string("type(null)\n", "null");
+    check_stdlib_string("type(print)\n", "native");
+    check_stdlib_error("type()\n");
+    check_stdlib_error("type(1, 2)\n");
+}
+
+static void test_stdlib_print_ok(void) {
+    check_stdlib_null("print(1)\n");
+    check_stdlib_null("print(\"a\", \"b\", 3)\n");
+    check_stdlib_null("print()\n");
+    check_stdlib_null("print(len(\"abc\"))\n");
+}
+
 static void test_eval_ordered_comparisons(void) {
     check_bool_result("1 < 2\n", true);
     check_bool_result("2 < 2\n", false);
@@ -1140,6 +1267,83 @@ static void test_value_native_ownership(void) {
     CHECK(native.type == VALUE_NULL);
 }
 
+static void test_value_error_ownership(void) {
+    Value error_value = value_error("boom");
+    CHECK(error_value.type == VALUE_ERROR);
+    CHECK(strcmp(error_value.as.string, "boom") == 0);
+    CHECK(error_value.as.string != NULL);
+
+    Value clone = value_clone(&error_value);
+    CHECK(clone.type == VALUE_ERROR);
+    CHECK(strcmp(clone.as.string, "boom") == 0);
+    CHECK(clone.as.string != error_value.as.string);
+
+    value_free(&clone);
+    CHECK(clone.type == VALUE_NULL);
+    value_free(&error_value);
+    CHECK(error_value.type == VALUE_NULL);
+}
+
+static void test_value_to_string(void) {
+    Value null_value = value_null();
+    Value text = value_to_string(&null_value);
+    CHECK(text.type == VALUE_STRING);
+    CHECK(strcmp(text.as.string, "null") == 0);
+    value_free(&text);
+
+    Value bool_value = value_bool(true);
+    text = value_to_string(&bool_value);
+    CHECK(strcmp(text.as.string, "true") == 0);
+    value_free(&text);
+
+    Value int_value = value_int(-42);
+    text = value_to_string(&int_value);
+    CHECK(strcmp(text.as.string, "-42") == 0);
+    value_free(&text);
+
+    Value float_value = value_float(3.5);
+    text = value_to_string(&float_value);
+    CHECK(strcmp(text.as.string, "3.5") == 0);
+    value_free(&text);
+
+    Value native_value = value_native(native_add);
+    text = value_to_string(&native_value);
+    CHECK(strcmp(text.as.string, "<native function>") == 0);
+    value_free(&text);
+
+    Value error_value = value_error("boom");
+    text = value_to_string(&error_value);
+    CHECK(strcmp(text.as.string, "boom") == 0);
+    value_free(&text);
+
+    Value string_value = value_string_copy("hi");
+    text = value_to_string(&string_value);
+    CHECK(text.type == VALUE_STRING);
+    CHECK(text.as.string != string_value.as.string);
+    CHECK(strcmp(text.as.string, "hi") == 0);
+    value_free(&text);
+    value_free(&string_value);
+
+    value_free(&null_value);
+    value_free(&bool_value);
+    value_free(&int_value);
+    value_free(&float_value);
+    value_free(&native_value);
+    value_free(&error_value);
+
+    text = value_to_string(NULL);
+    CHECK(text.type == VALUE_STRING);
+    CHECK(strcmp(text.as.string, "null") == 0);
+    value_free(&text);
+
+    /* sizeof buffer check via double at the precision boundary */
+    Value huge = value_float(1.7976931348623157e+308);
+    text = value_to_string(&huge);
+    CHECK(text.type == VALUE_STRING);
+    value_free(&text);
+    value_free(&huge);
+}
+
 int main(void) {
     /* Lexer */
     test_lexer_keywords();
@@ -1209,12 +1413,21 @@ int main(void) {
     test_eval_call_undefined_callee();
     test_eval_call_non_function();
     test_eval_call_argument_error_stops();
+    test_eval_native_error_reports();
     test_eval_ordered_comparisons();
     test_eval_comparison_type_errors();
     test_eval_comparison_in_condition();
     test_eval_float_remainder();
     test_eval_float_division_by_zero();
     test_eval_mixed_type_errors();
+
+    /* Standard library */
+    test_stdlib_len();
+    test_stdlib_int_conversions();
+    test_stdlib_float_conversions();
+    test_stdlib_str();
+    test_stdlib_type();
+    test_stdlib_print_ok();
 
     /* Native registry */
     test_native_register_and_lookup();
@@ -1226,6 +1439,8 @@ int main(void) {
     /* Value ownership */
     test_value_ownership();
     test_value_native_ownership();
+    test_value_error_ownership();
+    test_value_to_string();
 
     if (failures != 0) {
         fprintf(stderr, "%d test(s) failed.\n", failures);

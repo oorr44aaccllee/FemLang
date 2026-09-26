@@ -61,12 +61,81 @@ Value value_string_copy(const char *source) {
     return value;
 }
 
+Value value_error(const char *message) {
+    if (message == NULL) {
+        return value_null();
+    }
+    char *copy = copy_string(message);
+    if (copy == NULL) {
+        return value_null();
+    }
+    Value value;
+    value.type = VALUE_ERROR;
+    value.as.string = copy;
+    return value;
+}
+
+static void append_value_to_buffer(
+    const Value *value,
+    char *buffer,
+    size_t capacity
+) {
+    switch (value->type) {
+        case VALUE_NULL:
+            snprintf(buffer, capacity, "null");
+            break;
+        case VALUE_BOOL:
+            snprintf(buffer, capacity, "%s",
+                     value->as.boolean ? "true" : "false");
+            break;
+        case VALUE_INT:
+            snprintf(buffer, capacity, "%lld", (long long)value->as.integer);
+            break;
+        case VALUE_FLOAT:
+            snprintf(buffer, capacity, "%.17g", value->as.floating);
+            break;
+        case VALUE_NATIVE:
+            snprintf(buffer, capacity, "<native function>");
+            break;
+        case VALUE_ERROR:
+            if (value->as.string != NULL) {
+                snprintf(buffer, capacity, "%s", value->as.string);
+            } else {
+                snprintf(buffer, capacity, "error");
+            }
+            break;
+        case VALUE_STRING:
+            break;
+    }
+}
+
+/*
+ * Returns the display form of a value as a new owned string: strings are the
+ * raw bytes (no quotes), every other type is its textual representation. On
+ * allocation failure returns VALUE_NULL (see value.h "asked for string, got
+ * NULL" convention).
+ */
+Value value_to_string(const Value *value) {
+    if (value == NULL) {
+        return value_string_copy("null");
+    }
+    if (value->type == VALUE_STRING) {
+        return value_string_copy(value->as.string);
+    }
+    char buffer[64];
+    append_value_to_buffer(value, buffer, sizeof(buffer));
+    return value_string_copy(buffer);
+}
+
 Value value_clone(const Value *value) {
     if (value == NULL) {
         return value_null();
     }
     if (value->type == VALUE_STRING) {
         return value_string_copy(value->as.string);
+    }
+    if (value->type == VALUE_ERROR) {
+        return value_error(value->as.string);
     }
     /* Non-string types own no heap memory; a shallow copy is safe. */
     return *value;
@@ -76,7 +145,7 @@ void value_free(Value *value) {
     if (value == NULL) {
         return;
     }
-    if (value->type == VALUE_STRING) {
+    if (value->type == VALUE_STRING || value->type == VALUE_ERROR) {
         free(value->as.string);
     }
     value->type = VALUE_NULL;
@@ -99,6 +168,8 @@ bool value_truthy(const Value *value) {
         case VALUE_STRING:
             return value->as.string != NULL && value->as.string[0] != '\0';
         case VALUE_NATIVE:
+            return false;
+        case VALUE_ERROR:
             return false;
     }
     return false;
@@ -140,6 +211,11 @@ void print_value(const Value *value) {
             break;
         case VALUE_NATIVE:
             fputs("<native function>", stdout);
+            break;
+        case VALUE_ERROR:
+            if (value->as.string != NULL) {
+                fputs(value->as.string, stdout);
+            }
             break;
     }
 }
@@ -691,6 +767,15 @@ static Value eval(Environment *env, const AstNode *node) {
                 value_free(&arguments[i]);
             }
             free(arguments);
+
+            if (result.type == VALUE_ERROR) {
+                const char *message = result.as.string;
+                if (message != NULL) {
+                    env_record_error(env, message);
+                }
+                value_free(&result);
+                return value_null();
+            }
             return result;
         }
 

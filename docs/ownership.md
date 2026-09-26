@@ -10,22 +10,36 @@ A `Value` struct owns its own heap data and nothing else:
 
 - `VALUE_STRING` owns a single NUL-terminated `char *` allocated with `malloc`.
   The pointer is non-NULL while the value is alive.
+- `VALUE_ERROR` owns its message exactly like `VALUE_STRING` owns its bytes
+  (malloc'd, NUL-terminated `char *`). It is a transient control value: native
+  callbacks return it to report a runtime error, and the evaluator converts a
+  returned `VALUE_ERROR` into the environment error channel (see
+  "Call-expression ownership" below). Production code never stores a
+  `VALUE_ERROR`; `value_clone()` deep-copies the message and `value_free()`
+  releases it, so ownership for it follows the string rules.
 - `VALUE_NATIVE` stores a **borrowed** `FemNativeFunction` pointer (a native
   callback registered in the environment's registry). The value does not own
   it: `value_clone()` copies the pointer, `value_free()` only resets the value
   to `VALUE_NULL`, and the callback stays owned by whoever registered it.
-- Every other type (`VALUE_NULL`, `VALUE_BOOL`, `VALUE_INT`, `VALUE_FLOAT`) owns
-  no heap memory.
+- Every other type (`VALUE_NULL`, `VALUE_BOOL`, `VALUE_INT`, `VALUE_FLOAT`)
+  owns no heap memory.
 
 Guarantees:
 
-- `value_clone()` deep-copies strings and shallow-copies non-string values.
-- `value_free()` releases the owned string and resets the value to `VALUE_NULL`.
-  It is a no-op on an already-freed value, so freeing a value twice is safe.
+- `value_clone()` deep-copies strings and error messages and shallow-copies
+  non-string values.
+- `value_free()` releases the owned string/message and resets the value to
+  `VALUE_NULL`. It is a no-op on an already-freed value, so freeing a value
+  twice is safe.
 - If a string copy cannot be allocated, `value_string_copy()` and
   `value_clone()` return `VALUE_NULL` instead of a partial value. Callers that
   asked for a string and received `VALUE_NULL` must treat that as an allocation
   failure and must not reuse the returned value as a real (empty) string.
+- `value_to_string(value)` returns the display form of any value as a **new
+  owned string**: strings are their raw bytes (no quotes, distinct buffer),
+  every other type is its textual representation, and `NULL` renders as
+  `"null"`. It follows the same convention: allocation failure yields
+  `VALUE_NULL`.
 
 ## Environment ownership
 
@@ -60,6 +74,8 @@ The first semantic failure is recorded once in the environment:
 - applying a binary operator to incompatible operands:
   `cannot apply operator '<op>' to these values`
 - calling a non-function value: `attempt to call a non-function value`
+- any message returned by a native as a `VALUE_ERROR` (for example the
+  standard library's `len() expects a string`)
 
 After an error is recorded, every later evaluation returns `VALUE_NULL`
 immediately, so execution does not continue past the first failure. The running
@@ -98,4 +114,8 @@ native with the same name.
    and the array right after the call returns; the callback owns only the
    `Value` it returns;
 4. if any argument evaluation fails, already-evaluated arguments are released
-   and the call returns `VALUE_NULL`.
+   and the call returns `VALUE_NULL`;
+5. if the callback returns a `VALUE_ERROR`, the evaluator records its message
+   through `env_record_error()`, releases the error value, and returns
+   `VALUE_NULL` — so a native error behaves like any other runtime error and
+   the error value is never leaked or stored.
