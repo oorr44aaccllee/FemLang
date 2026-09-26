@@ -572,6 +572,94 @@ static void test_parser_if_else(void) {
     ast_free(program);
 }
 
+static void test_parser_if_elif_else(void) {
+    Parser parser;
+    AstNode *program = parse_program(
+        "if a:\n"
+        "    1\n"
+        "elif b:\n"
+        "    2\n"
+        "else:\n"
+        "    3\n",
+        &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    CHECK(stmt->type == AST_IF);
+    CHECK(stmt->as.if_statement.condition->type == AST_IDENTIFIER);
+
+    AstNode *elif_branch = stmt->as.if_statement.else_branch;
+    CHECK(elif_branch != NULL);
+    CHECK(elif_branch->type == AST_IF);
+    CHECK(elif_branch->as.if_statement.condition->type == AST_IDENTIFIER);
+    CHECK(strcmp(elif_branch->as.if_statement.condition->as.identifier, "b") == 0);
+    CHECK(elif_branch->as.if_statement.else_branch != NULL);
+    CHECK(elif_branch->as.if_statement.else_branch->type == AST_BLOCK);
+    ast_free(program);
+}
+
+static void test_parser_if_elif_chain(void) {
+    Parser parser;
+    AstNode *program = parse_program(
+        "if a:\n"
+        "    1\n"
+        "elif b:\n"
+        "    2\n"
+        "elif c:\n"
+        "    3\n"
+        "else:\n"
+        "    4\n",
+        &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    AstNode *first_elif = stmt->as.if_statement.else_branch;
+    CHECK(first_elif != NULL);
+    CHECK(first_elif->type == AST_IF);
+    AstNode *second_elif = first_elif->as.if_statement.else_branch;
+    CHECK(second_elif != NULL);
+    CHECK(second_elif->type == AST_IF);
+    CHECK(strcmp(second_elif->as.if_statement.condition->as.identifier, "c") == 0);
+    CHECK(second_elif->as.if_statement.else_branch->type == AST_BLOCK);
+    ast_free(program);
+}
+
+static void test_parser_if_elif_no_else(void) {
+    Parser parser;
+    AstNode *program = parse_program(
+        "if a:\n"
+        "    1\n"
+        "elif b:\n"
+        "    2\n",
+        &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    AstNode *elif_branch = stmt->as.if_statement.else_branch;
+    CHECK(elif_branch->type == AST_IF);
+    CHECK(elif_branch->as.if_statement.else_branch == NULL);
+    ast_free(program);
+}
+
+static void test_parser_stray_elif_else(void) {
+    Parser parser;
+    AstNode *program = parse_program("elif true:\n    1\n", &parser);
+    CHECK(program == NULL);
+    CHECK(parser.had_error);
+    CHECK(strstr(parser.error_message, "elif without a matching if") != NULL);
+
+    program = parse_program("else:\n    1\n", &parser);
+    CHECK(program == NULL);
+    CHECK(parser.had_error);
+    CHECK(strstr(parser.error_message, "else without a matching if") != NULL);
+}
+
 static void test_parser_block_statements(void) {
     Parser parser;
     AstNode *program = parse_program("if a:\n    b\n    c\n", &parser);
@@ -884,6 +972,102 @@ static void test_eval_string_ownership(void) {
 static void test_eval_if_branches(void) {
     check_int_result("if true:\n    1\nelse:\n    2\n", 1);
     check_int_result("if false:\n    1\nelse:\n    2\n", 2);
+}
+
+static void test_eval_if_elif(void) {
+    check_int_result(
+        "if 1 > 2:\n"
+        "    0\n"
+        "elif 2 > 1:\n"
+        "    1\n"
+        "else:\n"
+        "    2\n",
+        1);
+    check_int_result(
+        "if 1 > 2:\n"
+        "    0\n"
+        "elif 1 > 2:\n"
+        "    1\n"
+        "else:\n"
+        "    2\n",
+        2);
+    /* First true branch wins; later branches are not reached. */
+    check_int_result(
+        "if true:\n"
+        "    1\n"
+        "elif true:\n"
+        "    2\n"
+        "else:\n"
+        "    3\n",
+        1);
+}
+
+static void test_eval_if_elif_short_circuit(void) {
+    /* An elif condition whose evaluation would fail must not run when an
+     * earlier branch was already taken. */
+    check_int_result(
+        "if true:\n"
+        "    1\n"
+        "elif undefined_name:\n"
+        "    2\n"
+        "else:\n"
+        "    3\n",
+        1);
+    check_int_result(
+        "if false:\n"
+        "    1\n"
+        "elif true:\n"
+        "    2\n"
+        "elif undefined_name:\n"
+        "    3\n"
+        "else:\n"
+        "    4\n",
+        2);
+}
+
+static void test_eval_if_elif_no_branch_taken(void) {
+    RunResult run = run_source(
+        "if false:\n"
+        "    1\n"
+        "elif false:\n"
+        "    2\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+}
+
+static void test_eval_if_elif_in_function(void) {
+    check_int_result(
+        "fn classify(n):\n"
+        "    if n < 0:\n"
+        "        return -1\n"
+        "    elif n == 0:\n"
+        "        return 0\n"
+        "    else:\n"
+        "        return 1\n"
+        "classify(-5)\n",
+        -1);
+    check_int_result(
+        "fn classify(n):\n"
+        "    if n < 0:\n"
+        "        return -1\n"
+        "    elif n == 0:\n"
+        "        return 0\n"
+        "    else:\n"
+        "        return 1\n"
+        "classify(0)\n",
+        0);
+    check_int_result(
+        "fn classify(n):\n"
+        "    if n < 0:\n"
+        "        return -1\n"
+        "    elif n == 0:\n"
+        "        return 0\n"
+        "    else:\n"
+        "        return 1\n"
+        "classify(42)\n",
+        1);
 }
 
 static void test_eval_integer_operations(void) {
@@ -1901,6 +2085,10 @@ int main(void) {
     test_parser_identifier_precedence();
     test_parser_assignment_precedence();
     test_parser_if_else();
+    test_parser_if_elif_else();
+    test_parser_if_elif_chain();
+    test_parser_if_elif_no_else();
+    test_parser_stray_elif_else();
     test_parser_block_statements();
     test_parser_invalid_declaration();
     test_parser_invalid_assignment();
@@ -1932,6 +2120,10 @@ int main(void) {
     test_eval_string_concatenation();
     test_eval_string_ownership();
     test_eval_if_branches();
+    test_eval_if_elif();
+    test_eval_if_elif_short_circuit();
+    test_eval_if_elif_no_branch_taken();
+    test_eval_if_elif_in_function();
     test_eval_integer_operations();
     test_eval_division_by_zero_fails();
     test_eval_undefined_lookup_fails();

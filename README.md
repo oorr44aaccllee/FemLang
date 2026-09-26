@@ -100,6 +100,8 @@ Current milestone:
 - user-defined functions (`fn name(params):`) with local frames, lexical
   closures, recursion under a depth guard, and `return` semantics
   (see docs/functions.md)
+- `if` / `elif` / `else` conditionals with short-circuiting `elif` chains
+  (see docs/control-flow.md)
 - command-line interpreter: `./femlang examples/basic.fem`
 - automated regression test suite: `make test`
 

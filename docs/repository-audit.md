@@ -63,13 +63,16 @@ AST, evaluator, environment, and an ownership-safe native function registry.
   trailing comments;
 - parser: immutable and mutable declarations, assignment (incl. precedence),
   string literal content and escapes, arithmetic and identifier precedence,
-  `if`/`else`, multi-statement blocks, function definitions (shape,
-  zero-parameter form, error cases), and four invalid-input cases;
+  `if`/`else` and `if`/`elif`/`else` chains (multiple `elif`s, `elif` without
+  `else`, stray `elif`/`else` errors), function definitions (shape,
+  zero-parameter form, error cases), and several invalid-input cases;
 - evaluator: declarations, `mut` and successful/immutable/undefined
   reassignment, repeated string reassignment, string concatenation, string
   equality, value equality/comparisons (`==`, `!=`), string ownership (no
-  shared buffers), `if`/`else` branches, integer arithmetic, division by zero,
-  undefined lookup, call expressions, and (since Phase 7) functions: local
+  shared buffers), `if`/`else` branches and `elif` chains (first-true-wins,
+  all-false yields null, unreached `elif` conditions short-circuit), integer
+  arithmetic, division by zero, undefined lookup, call expressions, and
+  (since Phase 7) functions: local
   scope, return semantics, recursion and mutual recursion with the depth
   guard, arity and `return`-outside errors, closures (capture, shared mutable
   state, escaping closures, counters, higher-order/composition), function
@@ -103,6 +106,21 @@ also gained the `"fn"` result in the standard library.
 Known limitation carried forward: a reference cycle spanning two distinct
 frames is not collected (only the weak self-closure case is); documented in
 `docs/ownership.md` and `docs/functions.md`.
+
+## Phase 8 resolution (2026-09-25)
+
+Phase 8 landed `elif`, closing the last conditional-control gap:
+
+| Audit entry | Disposition in Phase 8 |
+| --- | --- |
+| `elif` lexed but dead (no parser support) | **Resolved.** `TOKEN_ELIF` is consumed in `if_statement()` (`src/parser.c`); an `elif` parses as a nested `AST_IF` in the `else` slot of its `if`, so conditions short-circuit (later branches evaluate only when earlier ones were false) and no AST/evaluator change was needed. |
+| Stray `elif`/`else` used to be a confusing generic parse error | **Resolved.** A standalone `elif`/`else` now reports `elif without a matching if` / `else without a matching if`. |
+| Statement/block polish (type-error messages from the audit table) | **Already resolved in Phase 5.** Mixed-type and unsupported operators report `cannot apply operator '...' to these values`. |
+
+New behavior from Phase 8: `if`/`elif`/`else` chains of any length, an
+optional final `else`, unreached `elif` conditions never evaluated, and the
+stray-`elif`/`else` diagnostics. `docs/control-flow.md` documents the feature;
+`examples/control_flow.fem` gained an `elif` classifier.
 
 ## Toolchain and sanitizer status
 
@@ -228,7 +246,10 @@ Dependency-driven, cheap-first:
    **Landed 2026-09-25, branch `phase-07-functions`** (functions.md, VALUE_FN,
    refcounted frames, weak self-closure bindings, depth guard).
 4. **Phase 8 — `elif`** (token exists) and statement/block polish including
-   the type-error messages above.
+   the type-error messages above. — **Landed 2026-09-25, branch
+   `phase-08-elif`** (nested `AST_IF` chains with short-circuit and
+   stray-`elif`/`else` diagnostics; the type-error items were already resolved
+   in Phase 5).
 5. **Phase 9 — loops** (`for in`, `while`, `break`, `continue`; all tokens
    exist).
 6. **Phase 10 — lists** (`AST_LIST` evaluation, `[..]` literals, indexing).

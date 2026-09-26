@@ -30,6 +30,8 @@ standard-library (builtins) interfaces �?" the same interfaces future tools
 - identifier-led expression statements (`a * b + c` parses as `(a * b) + c`);
 - assignment values parse with full expression precedence;
 - `if` / `else` with blocks of multiple statements;
+- `elif` chains: `if`/`elif`/`else`, multiple `elif`s, `elif` without `else`,
+  and stray `elif`/`else` without a preceding `if` is a parse error;
 - call expressions: empty and argument lists, argument expressions, calls as
   operands (precedence), nested calls (`f(g(2))(3)`), calls in declarations,
   and a missing closing paren is a parse error;
@@ -50,6 +52,10 @@ standard-library (builtins) interfaces �?" the same interfaces future tools
   binding does not affect another);
 - string concatenation;
 - `if` / `else` branch selection;
+- `if` / `elif` / `else` chains: first true branch wins across any number of
+  `elif`s, `else` runs when none match, no branch is taken when there is no
+  `else` (result is null), and unreached `elif` conditions are not evaluated
+  (short-circuit), including inside function bodies;
 - integer arithmetic, unary minus, precedence;
 - division by zero reports an error (integer and float);
 - undefined variable lookup reports an error;

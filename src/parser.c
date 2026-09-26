@@ -469,7 +469,19 @@ static AstNode *if_statement(Parser *parser) {
     }
 
     AstNode *else_branch = NULL;
-    if (match(parser, TOKEN_ELSE)) {
+    if (match(parser, TOKEN_ELIF)) {
+        /*
+         * An elif is a nested if laid in the else slot: conditions are only
+         * evaluated when every earlier one was false (short-circuit chain),
+         * which falls out of the evaluator's natural if/else dispatch.
+         */
+        else_branch = if_statement(parser);
+        if (else_branch == NULL) {
+            ast_free(condition);
+            ast_free(then_branch);
+            return NULL;
+        }
+    } else if (match(parser, TOKEN_ELSE)) {
         if (!match(parser, TOKEN_COLON)) {
             error_here(parser, "expected ':' after else");
             ast_free(condition);
@@ -751,6 +763,13 @@ static AstNode *statement(Parser *parser) {
 
     if (match(parser, TOKEN_FN)) {
         return parse_function(parser);
+    }
+
+    if (check(parser, TOKEN_ELIF) || check(parser, TOKEN_ELSE)) {
+        error_here(parser, check(parser, TOKEN_ELIF)
+                              ? "elif without a matching if"
+                              : "else without a matching if");
+        return NULL;
     }
 
     return expression_statement(parser);

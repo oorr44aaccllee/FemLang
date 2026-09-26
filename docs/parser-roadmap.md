@@ -39,7 +39,8 @@ The interpreter currently supports:
 - native function call expressions with own-value argument passing
 - user-defined function calls, with lexical closures and local environments;
   `return` (early or implicit null) and `return` outside a function is an error
-- `if` / `else` control flow
+- `if` / `elif` / `else` control flow (elif short-circuits: later conditions
+  are only reached when earlier ones were false)
 - unary minus and logical negation
 - error reporting through the environment error channel
 
@@ -65,7 +66,8 @@ See also:
 
 ## Not yet implemented
 
-- loops, `elif`, `try`/`catch`/`finally`, `match`
+- loops (`for`/`in`, `while`, `break`, `continue`), `try`/`catch`/`finally`,
+  `match`
 - string and list indexing; list literals
 
 These are the next milestones. Functions build directly on the
