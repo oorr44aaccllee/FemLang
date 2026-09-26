@@ -18,17 +18,20 @@ LICENSE                            editors/vscode/README.md
 Makefile                           editors/vscode/language-configuration.json
 examples/basic.fem                 editors/vscode/package.json
 examples/control_flow.fem          editors/vscode/syntaxes/femlang.tmLanguage.json
+examples/calls.fem
+examples/functions.fem
 
 include/       src/                docs/                tests/
   ast.h          ast.c               baseline-validation.md  test_runner.c
-  evaluator.h    eval_main.c         control-flow.md
-  lexer.h        evaluator.c         milestone-report.md
-  native.h       lexer.c             overview.md
-  parser.h       main.c              ownership.md
-  token.h        native.c            parser-roadmap.md
-  value.h        parse_main.c        reassignment.md
-                 parser.c            testing.md
-                 token.c
+  evaluator.h    builtins.c          control-flow.md
+  lexer.h        eval_main.c         functions.md
+  native.h       evaluator.c         milestone-report.md
+  parser.h       lexer.c             overview.md
+  token.h        main.c              ownership.md
+  value.h        native.c            parser-roadmap.md
+  builtins.h     parse_main.c        reassignment.md
+                 parser.c            stdlib.md
+                 token.c             testing.md
 ```
 
 The repository contains a working tree-walking interpreter for a small,
@@ -51,7 +54,7 @@ AST, evaluator, environment, and an ownership-safe native function registry.
 
 ## Test inventory
 
-`tests/test_runner.c` (864 lines, run via `make test`) exercises:
+`tests/test_runner.c` (run via `make test`) exercises:
 
 - lexer: keywords and playful aliases (`spark`/`serve`/`slay`/`skip`),
   identifiers, integers/floats, strings and escapes, unterminated string
@@ -60,15 +63,46 @@ AST, evaluator, environment, and an ownership-safe native function registry.
   trailing comments;
 - parser: immutable and mutable declarations, assignment (incl. precedence),
   string literal content and escapes, arithmetic and identifier precedence,
-  `if`/`else`, multi-statement blocks, and three invalid-input cases;
+  `if`/`else`, multi-statement blocks, function definitions (shape,
+  zero-parameter form, error cases), and four invalid-input cases;
 - evaluator: declarations, `mut` and successful/immutable/undefined
   reassignment, repeated string reassignment, string concatenation, string
   equality, value equality/comparisons (`==`, `!=`), string ownership (no
   shared buffers), `if`/`else` branches, integer arithmetic, division by zero,
-  undefined lookup;
+  undefined lookup, call expressions, and (since Phase 7) functions: local
+  scope, return semantics, recursion and mutual recursion with the depth
+  guard, arity and `return`-outside errors, closures (capture, shared mutable
+  state, escaping closures, counters, higher-order/composition), function
+  value flow, and immutable function/parameter bindings;
 - native registry: register/lookup/replace/grow, null-name and null-fn
   rejection, callback invocation, idempotent cleanup;
-- value ownership: clone independence, double-free safety, free resets to null.
+- value ownership: clone independence, double-free safety, free resets to
+  null, and (since Phase 7) `VALUE_FN` ownership (deep-copied name/params,
+  borrowed body, retained closure, independent clone, invalid-input fallback).
+
+## Phase 7 resolution (2026-09-25)
+
+Phase 7 (functions and closures) resolved the `TOKEN_FN`-dead entry and added
+the last missing piece of the callable surface:
+
+| Audit entry | Disposition in Phase 7 |
+| --- | --- |
+| `fn` lexed but dead (no AST, parser, or evaluator support) | **Resolved.** `AST_FUNCTION` (`src/ast.c`), `parse_function()` (`src/parser.c`), and `eval_function_call()` (`src/evaluator.c`); `fn name(params):` bodies bind immutable function values. |
+| Callable values | **Resolved.** `VALUE_FN` (`include/value.h`), a `FemFunction` value type; `AST_CALL` dispatches between `VALUE_NATIVE` and `VALUE_FN`. |
+| Local environments | **Resolved.** Environments are reference-counted with a parent chain; frames are children of the called function's closure. |
+| Recursion crash risk | **Resolved.** `MAX_CALL_DEPTH` (256) guard records `recursion limit exceeded` instead of overflowing the C stack. |
+| Closure semantics | **Decided.** Lexical capture by sharing the defining environment (capture by variable); function values retain their closure; storing a function into the environment it closes over is a weak binding (no retain) so self-recursion does not cycle. |
+
+New public surface from Phase 7: `AST_FUNCTION`, `VALUE_FN`,
+`value_function()`, `env_retain()`/`env_release()` (refcounted environments),
+`env_record_error()`/`env_record_error_format()` (errors recorded at the
+root), function call frames, `type(f)` == `"fn"`, display `<fn 'name'>`;
+example `examples/functions.fem` and reference `docs/functions.md`. `type()`
+also gained the `"fn"` result in the standard library.
+
+Known limitation carried forward: a reference cycle spanning two distinct
+frames is not collected (only the weak self-closure case is); documented in
+`docs/ownership.md` and `docs/functions.md`.
 
 ## Toolchain and sanitizer status
 
@@ -190,7 +224,9 @@ Dependency-driven, cheap-first:
    registry; `docs/overview.md` rewrite and `src/parse_main.c`/`src/main.c`
    triage (`femlang tokens | ast | run`).
 3. **Phase 7 — functions.** `AST_FN`, function values, local environments,
-   recursion (loop guard), closure semantics decision (heap-backed envs?).
+   recursion (loop guard), closure semantics decision (heap-backed envs?). —
+   **Landed 2026-09-25, branch `phase-07-functions`** (functions.md, VALUE_FN,
+   refcounted frames, weak self-closure bindings, depth guard).
 4. **Phase 8 — `elif`** (token exists) and statement/block polish including
    the type-error messages above.
 5. **Phase 9 — loops** (`for in`, `while`, `break`, `continue`; all tokens
@@ -216,6 +252,13 @@ The step-2 CLI triage (`femlang tokens | ast | run`) and `docs/overview.md`
 rewrite were intentionally deferred: `overview.md` got a light current-state
 refresh, and the CLI subcommands stay out of scope until the parser/evaluator
 surface stabilizes further.
+
+Phase 7 (2026-09-25, branch `phase-07-functions`) landed user-defined
+functions per step 3: `AST_FUNCTION` and `VALUE_FN`, reference-counted
+environment frames parented to the function's closure, recursion under a
+256-call depth guard, `return` semantics (early, implicit null, and the
+outside-a-function error), and closures via shared defining environments with
+weak self-closure bindings. New `docs/functions.md` and `examples/functions.fem`.
 
 ## Evidence (this session)
 

@@ -83,6 +83,17 @@ static void print_ast(const AstNode *node, size_t depth) {
             puts("EXPRESSION_STATEMENT");
             print_ast(node->as.expression_statement.expression, depth + 1);
             break;
+        case AST_FUNCTION:
+            printf("FUNCTION %s(", node->as.function.name);
+            for (size_t i = 0; i < node->as.function.parameters.count; i++) {
+                if (i > 0) {
+                    fputs(", ", stdout);
+                }
+                printf("%s", node->as.function.parameters.items[i]->as.identifier);
+            }
+            puts(")");
+            print_ast(node->as.function.body, depth + 1);
+            break;
         case AST_RETURN:
             puts("RETURN");
             print_ast(node->as.return_statement.value, depth + 1);

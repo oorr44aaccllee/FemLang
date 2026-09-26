@@ -68,11 +68,12 @@ str("x")    # "x"
 ## `type(x)`
 
 Name of a value's dynamic type: `"null"`, `"bool"`, `"int"`, `"float"`,
-`"string"`, `"native"`, or `"error"`.
+`"string"`, `"native"`, `"fn"`, or `"error"`.
 
 ```femlang
 type(1)      # "int"
 type(print)  # "native"
+type(add)    # "fn"   (a user-defined function)
 ```
 
 ## Example

@@ -17,6 +17,13 @@ A `Value` struct owns its own heap data and nothing else:
   "Call-expression ownership" below). Production code never stores a
   `VALUE_ERROR`; `value_clone()` deep-copies the message and `value_free()`
   releases it, so ownership for it follows the string rules.
+- `VALUE_FN` owns a `FemFunction` struct (see `include/value.h`) whose name
+  and parameter array are heap-owned. The body AST node is **borrowed** (it
+  lives as long as the parsed program), and the closure environment is
+  **retained**: `value_function()` deep-copies the name and parameters and
+  calls `env_retain()` on the closure. `value_clone()` duplicates name and
+  parameters but shares the body node, retaining the closure again; copies are
+  therefore independent except for the shared, immutable body.
 - `VALUE_NATIVE` stores a **borrowed** `FemNativeFunction` pointer (a native
   callback registered in the environment's registry). The value does not own
   it: `value_clone()` copies the pointer, `value_free()` only resets the value
@@ -26,8 +33,8 @@ A `Value` struct owns its own heap data and nothing else:
 
 Guarantees:
 
-- `value_clone()` deep-copies strings and error messages and shallow-copies
-  non-string values.
+- `value_clone()` deep-copies strings, error messages, and function values
+  and shallow-copies non-heap-owning values.
 - `value_free()` releases the owned string/message and resets the value to
   `VALUE_NULL`. It is a no-op on an already-freed value, so freeing a value
   twice is safe.
@@ -47,6 +54,34 @@ Each binding in the environment owns two heap objects:
 
 1. a deep copy of the binding name (a `char *`);
 2. a deep copy of the binding value (`value_clone()` semantics above).
+
+Environments form a **parent chain** and are **reference-counted**:
+
+- `env_new()` creates a root with one reference held by the host. `env_free()`
+  is the host's release; `env_retain()`/`env_release()` transfer shared
+  ownership.
+- A function call frame is an environment whose parent is the called function's
+  closure environment; the frame retains its parent, and a `VALUE_FN` retains
+  its closure. Frames are transient: `eval_function_call()` releases the frame
+  when the call returns.
+- When the last reference drops, `env_destroy()` releases every binding
+  (deep-freed values, releasing any `VALUE_FN` closures) and then releases the
+  parent chain upward. `env_release()` is a no-op at zero references, which is
+  what makes weakly-stored function copies safe to free during destruction
+  (see below).
+- **Weak bindings.** Storing a function value inside the very environment it
+  closes over — the idiomatic self- or sibling-recursive definition — installs
+  a deep copy of the function **without** `env_retain()`. `env_define()` and
+  `env_assign()` detect `value.fn->closure == env` and use the weak path; every
+  other store retains. Weak storage breaks the would-be reference cycles of
+  recursive definitions so an environment can be freed when its last external
+  reference drops.
+- **Known limitation.** A cycle that spans two *different* environments (A
+  stores a function closing over B while B stores a function closing over A,
+  and neither is the weak self-closure case) is not collected by the
+  reference counter. The idiomatic patterns (self recursion, escaping
+  closures) do not create such cycles, and the limitation is accepted rather
+  than solving it with a garbage collector.
 
 API contract:
 
@@ -74,6 +109,10 @@ The first semantic failure is recorded once in the environment:
 - applying a binary operator to incompatible operands:
   `cannot apply operator '<op>' to these values`
 - calling a non-function value: `attempt to call a non-function value`
+- calling a user function with the wrong argument count:
+  `function 'name' expects 2 arguments, got 1`
+- `return` used outside any function: `return outside a function`
+- recursion past the depth guard: `recursion limit exceeded`
 - any message returned by a native as a `VALUE_ERROR` (for example the
   standard library's `len() expects a string`)
 
@@ -105,17 +144,22 @@ native with the same name.
 
 `AST_CALL` evaluation:
 
-1. the callee is evaluated and must be a `VALUE_NATIVE`; otherwise
-   `attempt to call a non-function value` is recorded;
+1. the callee is evaluated and must be a `VALUE_NATIVE` (a registered native)
+   or a `VALUE_FN` (a user function); otherwise `attempt to call a
+   non-function value` is recorded;
 2. every argument is evaluated left to right into a temporary array that the
    call owns for the duration of the call;
-3. the callback receives `(count, args)` and must treat the array as
-   borrowed — the evaluator frees each argument value (deep-freed for strings)
-   and the array right after the call returns; the callback owns only the
-   `Value` it returns;
-4. if any argument evaluation fails, already-evaluated arguments are released
+3. for a `VALUE_NATIVE` callee, the callback receives `(count, args)` and must
+   treat the array as borrowed — the evaluator frees each argument value
+   (deep-freed for strings) and the array right after the call returns; the
+   callback owns only the `Value` it returns;
+4. for a `VALUE_FN` callee, the evaluator opens a frame environment parented to
+   the callee's closure, binds each parameter as an immutable copy of the
+   corresponding argument, evaluates the body, and returns the body's `return`
+   value (or `null`); the frame is released when the call returns;
+5. if any argument evaluation fails, already-evaluated arguments are released
    and the call returns `VALUE_NULL`;
-5. if the callback returns a `VALUE_ERROR`, the evaluator records its message
+6. if the call returns a `VALUE_ERROR`, the evaluator records its message
    through `env_record_error()`, releases the error value, and returns
    `VALUE_NULL` — so a native error behaves like any other runtime error and
    the error value is never leaked or stored.

@@ -1,0 +1,45 @@
+fn add(a, b):
+    return a + b
+
+fn fib(n):
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+fn make_counter(start):
+    mut count = start
+    fn step():
+        count = count + 1
+        return count
+    return step
+
+fn compose(f, g):
+    fn h(x):
+        return f(g(x))
+    return h
+
+fn inc(x):
+    return x + 1
+
+fn double_value(x):
+    return x * 2
+
+print("add(2, 3) =", add(2, 3))
+print("fib(10) =", fib(10))
+print("fib(3) + fib(5) =", fib(3) + fib(5))
+
+let a = make_counter(10)
+let b = make_counter(100)
+print("counter a:", a(), a(), a())
+print("counter b:", b())
+
+let f = compose(inc, double_value)
+print("compose(inc, double_value)(4) =", f(4))
+
+let base = 5
+fn scale(x):
+    return base * x
+print("scale(3) =", scale(3))
+
+print("type(fib) =", type(fib))
+print("str(fib) =", str(fib))

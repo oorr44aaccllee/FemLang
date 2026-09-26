@@ -84,6 +84,11 @@ void ast_free(AstNode *node) {
             ast_free(node->as.if_statement.then_branch);
             ast_free(node->as.if_statement.else_branch);
             break;
+        case AST_FUNCTION:
+            free(node->as.function.name);
+            free_node_list(&node->as.function.parameters);
+            ast_free(node->as.function.body);
+            break;
         case AST_PROGRAM:
         case AST_BLOCK:
             free_node_list(&node->as.block.statements);

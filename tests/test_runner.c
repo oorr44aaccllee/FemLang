@@ -706,6 +706,72 @@ static void test_parser_call_missing_paren(void) {
     CHECK(parser.had_error);
 }
 
+static void test_parser_function_definition(void) {
+    Parser parser;
+    AstNode *program = parse_program(
+        "fn add(a, b, c):\n"
+        "    return a + b\n",
+        &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    CHECK(stmt->type == AST_FUNCTION);
+    CHECK(strcmp(stmt->as.function.name, "add") == 0);
+    CHECK(stmt->as.function.parameters.count == 3);
+    if (stmt->as.function.parameters.count == 3) {
+        CHECK(strcmp(stmt->as.function.parameters.items[0]->as.identifier, "a") == 0);
+        CHECK(strcmp(stmt->as.function.parameters.items[1]->as.identifier, "b") == 0);
+        CHECK(strcmp(stmt->as.function.parameters.items[2]->as.identifier, "c") == 0);
+    }
+    CHECK(stmt->as.function.body->type == AST_BLOCK);
+    CHECK(stmt->as.function.body->as.block.statements.count == 1);
+    ast_free(program);
+}
+
+static void test_parser_function_no_parameters(void) {
+    Parser parser;
+    AstNode *program = parse_program(
+        "fn hi():\n"
+        "    return 1\n",
+        &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    CHECK(stmt->type == AST_FUNCTION);
+    CHECK(stmt->as.function.parameters.count == 0);
+    ast_free(program);
+}
+
+static void test_parser_function_errors(void) {
+    Parser parser;
+    AstNode *program = parse_program("fn :\n    return 1\n", &parser);
+    CHECK(program == NULL);
+    CHECK(parser.had_error);
+
+    program = parse_program("fn f\n    return 1\n", &parser);
+    CHECK(program == NULL);
+    CHECK(parser.had_error);
+
+    program = parse_program("fn f(1):\n    return 1\n", &parser);
+    CHECK(program == NULL);
+    CHECK(parser.had_error);
+
+    program = parse_program("fn f():\n    return 1\n", &parser);
+    CHECK(program != NULL);
+    ast_free(program);
+}
+
+static void test_parser_function_missing_block(void) {
+    Parser parser;
+    AstNode *program = parse_program("fn f():\n", &parser);
+    CHECK(program == NULL);
+    CHECK(parser.had_error);
+}
+
 /*
  * Evaluator tests
  */
@@ -1045,6 +1111,401 @@ static void test_stdlib_str(void) {
     check_stdlib_string("str(1 + 2)\n", "3");
 }
 
+static void test_eval_function_basic(void) {
+    check_int_result(
+        "fn add(a, b):\n"
+        "    return a + b\n"
+        "add(2, 3)\n",
+        5);
+    check_int_result(
+        "fn add(a, b):\n"
+        "    return a + b\n"
+        "add(20, 22)\n",
+        42);
+}
+
+static void test_eval_function_local_scope(void) {
+    /* Parameters and locals must be isolated from the enclosing scope. */
+    check_int_result(
+        "let x = 100\n"
+        "fn f(x):\n"
+        "    let y = 7\n"
+        "    return x + y\n"
+        "f(1)\n",
+        8);
+    /* A local declaration shadows an outer one within the function body. */
+    check_int_result(
+        "let x = 100\n"
+        "fn f(x):\n"
+        "    let x = 5\n"
+        "    return x\n"
+        "f(1)\n",
+        5);
+    /* The outer binding is untouched by anything a function does. */
+    check_int_result(
+        "let x = 100\n"
+        "fn f(x):\n"
+        "    let x = 3\n"
+        "    return x\n"
+        "f(99)\n"
+        "x\n",
+        100);
+}
+
+static void test_eval_function_no_return(void) {
+    /* A function that never returns produces null when called. */
+    RunResult run = run_source(
+        "fn f():\n"
+        "    1 + 2\n"
+        "f()\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+
+    /* A bare `return` yields null too. */
+    check_int_result(
+        "fn f():\n"
+        "    return\n"
+        "let r = f()\n"
+        "if r == null:\n"
+        "    1\n"
+        "else:\n"
+        "    2\n",
+        1);
+}
+
+static void test_eval_function_return_in_if(void) {
+    check_int_result(
+        "fn sign(n):\n"
+        "    if n < 0:\n"
+        "        return -1\n"
+        "    else:\n"
+        "        return 1\n"
+        "sign(-5)\n",
+        -1);
+    check_int_result(
+        "fn sign(n):\n"
+        "    if n < 0:\n"
+        "        return -1\n"
+        "    else:\n"
+        "        return 1\n"
+        "sign(9)\n",
+        1);
+    /* Return alone (no else) leaves a null when the branch is skipped. */
+    RunResult run = run_source(
+        "fn f(n):\n"
+        "    if n < 0:\n"
+        "        return -1\n"
+        "f(5)\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+}
+
+static void test_eval_function_call_in_expression(void) {
+    check_int_result(
+        "fn f():\n"
+        "    return 3\n"
+        "f() * 2\n",
+        6);
+    check_int_result(
+        "fn f(x):\n"
+        "    return x + 1\n"
+        "f(f(1))\n",
+        3);
+    check_int_result(
+        "fn f():\n"
+        "    return 2\n"
+        "let a = f() + f()\n"
+        "a + f()\n",
+        6);
+}
+
+static void test_eval_function_calls_native(void) {
+    RunResult run = run_source_with_natives(
+        "fn f():\n"
+        "    return add(2, 3)\n"
+        "f()\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_INT);
+    CHECK(run.result.as.integer == 5);
+    value_free(&run.result);
+
+    /* A native handled its own error: message must surface. */
+    run = run_source_with_natives(
+        "fn f():\n"
+        "    return boom()\n"
+        "f()\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(strcmp(run.error, "boom") == 0);
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+}
+
+static void test_eval_function_recursion(void) {
+    check_int_result(
+        "fn fib(n):\n"
+        "    if n < 2:\n"
+        "        return n\n"
+        "    return fib(n - 1) + fib(n - 2)\n"
+        "fib(1)\n",
+        1);
+    check_int_result(
+        "fn fib(n):\n"
+        "    if n < 2:\n"
+        "        return n\n"
+        "    return fib(n - 1) + fib(n - 2)\n"
+        "fib(10)\n",
+        55);
+    check_int_result(
+        "fn count_up(n):\n"
+        "    if n == 0:\n"
+        "        return 0\n"
+        "    return count_up(n - 1) + 1\n"
+        "count_up(200)\n",
+        200);
+    /* Mutual recursion between two functions. */
+    check_int_result(
+        "fn even(n):\n"
+        "    if n == 0:\n"
+        "        return true\n"
+        "    return odd(n - 1)\n"
+        "fn odd(n):\n"
+        "    if n == 0:\n"
+        "        return false\n"
+        "    return even(n - 1)\n"
+        "let a = even(10)\n"
+        "let b = odd(7)\n"
+        "if a == b:\n"
+        "    1\n"
+        "else:\n"
+        "    0\n",
+        1);
+}
+
+static void test_eval_function_recursion_guard(void) {
+    RunResult run = run_source(
+        "fn forever():\n"
+        "    return forever()\n"
+        "forever()\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(strcmp(run.error, "recursion limit exceeded") == 0);
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+
+    /* A guarded runaway call must not leave the program error-stuck. */
+    run = run_source(
+        "fn forever():\n"
+        "    return forever()\n"
+        "let x = forever()\n"
+        "let x = 1\n"
+        "x\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    value_free(&run.result);
+}
+
+static void test_eval_function_arity_error(void) {
+    RunResult run = run_source(
+        "fn take_two(a, b):\n"
+        "    return a + b\n"
+        "take_two(1)\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(strcmp(run.error,
+                  "function 'take_two' expects 2 arguments, got 1") == 0);
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+
+    run = run_source(
+        "fn take_two(a, b):\n"
+        "    return a + b\n"
+        "take_two(1, 2, 3)\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    value_free(&run.result);
+}
+
+static void test_eval_return_outside_function(void) {
+    RunResult run = run_source("return 1\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(strcmp(run.error, "return outside a function") == 0);
+    CHECK(run.result.type == VALUE_NULL);
+    value_free(&run.result);
+
+    /* Return inside an if at the top level must still be rejected. */
+    run = run_source("if true:\n    return 1\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    value_free(&run.result);
+}
+
+static void test_eval_function_rebinding_error(void) {
+    /* Function bindings are immutable. */
+    RunResult run = run_source(
+        "fn f():\n"
+        "    return 1\n"
+        "f = 2\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    value_free(&run.result);
+
+    /* Parameters are immutable too. */
+    run = run_source(
+        "fn f(x):\n"
+        "    x = 2\n"
+        "    return x\n"
+        "f(1)\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    value_free(&run.result);
+}
+
+static void test_eval_function_closure_capture(void) {
+    /* A function reads a variable from the enclosing scope at call time. */
+    check_int_result(
+        "let base = 10\n"
+        "fn scale(x):\n"
+        "    return base * x\n"
+        "scale(3)\n",
+        30);
+    /* Re-declaring `base` rebinds the shared slot (capture by variable, like
+     * Python), so the closure observes the new value. */
+    check_int_result(
+        "let base = 10\n"
+        "fn scale(x):\n"
+        "    return base * x\n"
+        "let base = 2\n"
+        "scale(3)\n",
+        6);
+}
+
+static void test_eval_function_closure_mutation(void) {
+    /* The closure shares the enclosing frame, so mutations persist. */
+    check_int_result(
+        "mut total = 0\n"
+        "fn bump():\n"
+        "    total = total + 1\n"
+        "    return total\n"
+        "bump()\n"
+        "bump()\n"
+        "bump()\n",
+        3);
+}
+
+static void test_eval_function_escaping_closure(void) {
+    /* A closure surviving its outer call keeps its captured variables. */
+    check_int_result(
+        "fn make():\n"
+        "    let x = 5\n"
+        "    fn get():\n"
+        "        return x\n"
+        "    return get\n"
+        "let g = make()\n"
+        "g()\n",
+        5);
+    check_int_result(
+        "fn make():\n"
+        "    let x = 5\n"
+        "    fn get():\n"
+        "        return x\n"
+        "    return get\n"
+        "let g = make()\n"
+        "let h = make()\n"
+        "g() + h()\n",
+        10);
+}
+
+static void test_eval_function_making_counter(void) {
+    /* Each escaping closure owns its own captured mutable state. */
+    check_int_result(
+        "fn make_counter(start):\n"
+        "    mut count = start\n"
+        "    fn step():\n"
+        "        count = count + 1\n"
+        "        return count\n"
+        "    return step\n"
+        "let a = make_counter(10)\n"
+        "let b = make_counter(100)\n"
+        "let a1 = a()\n"
+        "let a2 = a()\n"
+        "let b1 = b()\n"
+        "let b2 = b()\n"
+        "let pair = a1 * 1000 + a2 * 100 + b1 * 10 + b2\n"
+        "pair\n",
+        13312);
+}
+
+static void test_eval_function_higher_order(void) {
+    check_int_result(
+        "fn apply_twice(f, x):\n"
+        "    return f(f(x))\n"
+        "fn double_value(x):\n"
+        "    return x * 2\n"
+        "apply_twice(double_value, 5)\n",
+        20);
+    check_int_result(
+        "fn make_adder(n):\n"
+        "    fn add(x):\n"
+        "        return x + n\n"
+        "    return add\n"
+        "let add5 = make_adder(5)\n"
+        "let add10 = make_adder(10)\n"
+        "add5(add10(1))\n",
+        16);
+    check_int_result(
+        "fn compose(f, g):\n"
+        "    fn h(x):\n"
+        "        return f(g(x))\n"
+        "    return h\n"
+        "fn inc(x):\n"
+        "    return x + 1\n"
+        "fn double_value(x):\n"
+        "    return x * 2\n"
+        "let f = compose(inc, double_value)\n"
+        "f(4)\n",
+        9);
+}
+
+static void test_eval_function_shadowing_via_let(void) {
+    /* Re-declaring the same function name is a fresh immutable binding. */
+    check_int_result(
+        "fn f():\n"
+        "    return 1\n"
+        "fn f(x):\n"
+        "    return x\n"
+        "f(5)\n",
+        5);
+}
+
+static void test_eval_function_value_flow(void) {
+    /* Functions flow through variables, calls, and native arguments. */
+    check_int_result(
+        "fn f():\n"
+        "    return 7\n"
+        "let g = f\n"
+        "g()\n",
+        7);
+    check_int_result(
+        "fn f():\n"
+        "    return 7\n"
+        "let pick = f\n"
+        "let g = pick\n"
+        "g()\n",
+        7);
+    check_int_result(
+        "fn add(a, b):\n"
+        "    return a + b\n"
+        "add(add(1, 2), add(3, 4))\n",
+        10);
+}
+
 static void test_stdlib_type(void) {
     check_stdlib_string("type(1)\n", "int");
     check_stdlib_string("type(1.5)\n", "float");
@@ -1052,8 +1513,75 @@ static void test_stdlib_type(void) {
     check_stdlib_string("type(\"s\")\n", "string");
     check_stdlib_string("type(null)\n", "null");
     check_stdlib_string("type(print)\n", "native");
+    check_stdlib_string("fn double_value(x):\n    return x * 2\ntype(double_value)\n", "fn");
+    check_stdlib_string("fn double_value(x):\n    return x * 2\nstr(double_value)\n", "<fn 'double_value'>");
+    check_stdlib_null("fn double_value(x):\n    return x * 2\nprint(double_value)\n");
     check_stdlib_error("type()\n");
     check_stdlib_error("type(1, 2)\n");
+}
+
+/*
+ * Value ownership tests for user-defined functions: value_function()
+ * deep-copies the name and parameter strings, borrows the body, and retains
+ * the closure. Clones duplicate name and parameters (independent storage)
+ * while sharing the body and re-retaining the closure.
+ */
+
+static void test_value_function_ownership(void) {
+    Environment *env = env_new();
+    CHECK(env != NULL);
+    if (env == NULL) {
+        return;
+    }
+    AstNode *body = ast_new(AST_INTEGER, 1, 1);
+    CHECK(body != NULL);
+    if (body == NULL) {
+        env_free(env);
+        return;
+    }
+    body->as.integer = 7;
+
+    char *parameters[3] = {"alpha", "beta", "gamma"};
+    Value first = value_function("compute", parameters, 3, body, env);
+    CHECK(first.type == VALUE_FN);
+    if (first.type == VALUE_FN) {
+        CHECK(strcmp(first.as.fn->name, "compute") == 0);
+        CHECK(first.as.fn->parameter_count == 3);
+        CHECK(strcmp(first.as.fn->parameters[2], "gamma") == 0);
+        CHECK(first.as.fn->parameters[0] != parameters[0]);
+        CHECK(first.as.fn->body == body);
+        CHECK(first.as.fn->closure == env);
+
+        Value clone = value_clone(&first);
+        CHECK(clone.type == VALUE_FN);
+        if (clone.type == VALUE_FN) {
+            CHECK(clone.as.fn != first.as.fn);
+            CHECK(strcmp(clone.as.fn->name, "compute") == 0);
+            CHECK(clone.as.fn->parameter_count == 3);
+            CHECK(clone.as.fn->parameters[0] != first.as.fn->parameters[0]);
+            CHECK(strcmp(clone.as.fn->parameters[2], "gamma") == 0);
+            CHECK(clone.as.fn->body == body);
+            CHECK(clone.as.fn->closure == first.as.fn->closure);
+            value_free(&clone);
+        }
+
+        /* Freeing the original leaves the clone's storage untouched. */
+        Value string_from_fn = value_to_string(&first);
+        CHECK(string_from_fn.type == VALUE_STRING);
+        CHECK(strcmp(string_from_fn.as.string, "<fn 'compute'>") == 0);
+        value_free(&string_from_fn);
+
+        value_free(&first);
+    }
+
+    /* Invalid inputs fall back to null with no allocation. */
+    Value invalid = value_function(NULL, parameters, 1, body, env);
+    CHECK(invalid.type == VALUE_NULL);
+    invalid = value_function("f", parameters, 1, body, NULL);
+    CHECK(invalid.type == VALUE_NULL);
+
+    env_free(env);
+    ast_free(body);
 }
 
 static void test_stdlib_print_ok(void) {
@@ -1384,6 +1912,10 @@ int main(void) {
     test_parser_nested_calls();
     test_parser_call_in_declaration();
     test_parser_call_missing_paren();
+    test_parser_function_definition();
+    test_parser_function_no_parameters();
+    test_parser_function_errors();
+    test_parser_function_missing_block();
 
     /* Evaluator */
     test_eval_let_declaration();
@@ -1420,6 +1952,24 @@ int main(void) {
     test_eval_float_remainder();
     test_eval_float_division_by_zero();
     test_eval_mixed_type_errors();
+    test_eval_function_basic();
+    test_eval_function_local_scope();
+    test_eval_function_no_return();
+    test_eval_function_return_in_if();
+    test_eval_function_call_in_expression();
+    test_eval_function_calls_native();
+    test_eval_function_recursion();
+    test_eval_function_recursion_guard();
+    test_eval_function_arity_error();
+    test_eval_return_outside_function();
+    test_eval_function_rebinding_error();
+    test_eval_function_closure_capture();
+    test_eval_function_closure_mutation();
+    test_eval_function_escaping_closure();
+    test_eval_function_making_counter();
+    test_eval_function_higher_order();
+    test_eval_function_shadowing_via_let();
+    test_eval_function_value_flow();
 
     /* Standard library */
     test_stdlib_len();
@@ -1440,6 +1990,7 @@ int main(void) {
     test_value_ownership();
     test_value_native_ownership();
     test_value_error_ownership();
+    test_value_function_ownership();
     test_value_to_string();
 
     if (failures != 0) {

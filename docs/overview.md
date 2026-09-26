@@ -4,14 +4,15 @@ This document summarizes the short-term direction for the language and the curre
 
 ## Current status
 
-> Status note (Phase 6): this file retains the longer-term roadmap; the
-> current-milestone detail lives in `docs/parser-roadmap.md` and
-> `docs/stdlib.md`. A full rewrite of this page is deferred until the
+> Status note (Phase 7): this file retains the longer-term roadmap; the
+> current-milestone detail lives in `docs/parser-roadmap.md`, `docs/stdlib.md`,
+> and `docs/functions.md`. A full rewrite of this page is deferred until the
 > parser/evaluator surface stabilizes (see `docs/repository-audit.md`).
 
 The repo now contains the C11 lexer, AST, parser, and a tree-walking
 evaluator with immutable/mutable bindings, an error channel, call expressions
-through a native registry, and a small native standard library
+through a native registry, user-defined functions with recursion and
+closures, and a small native standard library
 (`print`, `len`, `int`, `float`, `str`, `type`). The CLI runs `.fem` files:
 `./femlang examples/basic.fem`.
 

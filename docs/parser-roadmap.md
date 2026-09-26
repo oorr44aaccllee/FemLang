@@ -19,6 +19,8 @@ prototype:
   bundled `print` native
 - native standard library (`src/builtins.c`, `include/builtins.h`):
   `print`, `len`, `int`, `float`, `str`, `type`, with `VALUE_ERROR` reporting
+- user-defined functions (`fn name(params):` blocks) with local frames,
+  recursion under a depth guard, and closures (see `docs/functions.md`)
 
 ## Supported semantics
 
@@ -32,8 +34,11 @@ The interpreter currently supports:
 - string concatenation and equality
 - ordered comparisons `< <= > >=` on numbers (booleans; other types are a
   runtime error)
-- `==` / `!=` on any two values of the same type (different types are unequal)
+- `==` / `!=` on any two values of the same type (different types are unequal;
+  functions and natives never compare equal)
 - native function call expressions with own-value argument passing
+- user-defined function calls, with lexical closures and local environments;
+  `return` (early or implicit null) and `return` outside a function is an error
 - `if` / `else` control flow
 - unary minus and logical negation
 - error reporting through the environment error channel
@@ -41,10 +46,12 @@ The interpreter currently supports:
 ## Example
 
 ```femlang
+fn add(a, b):
+    return a + b
+
 let x = 10
 let y = 20
-let total = x + y
-print(total)
+print(add(x, y))
 ```
 
 Running `./femlang` on this file prints `30` (via `print`).
@@ -52,16 +59,16 @@ Running `./femlang` on this file prints `30` (via `print`).
 See also:
 - `examples/calls.fem` (calls, comparisons, remainder);
 - `examples/stdlib.fem` (standard library tour);
-- `docs/stdlib.md` for the native standard library reference.
+- `examples/functions.fem` (functions, recursion, closures);
+- `docs/stdlib.md` for the native standard library reference and
+  `docs/functions.md` for the function and closure reference.
 
 ## Not yet implemented
 
-- user-defined functions (`fn`): `TOKEN_FN` is lexed but has no AST or
-  evaluator support yet; only native callbacks are callable today
-- lists, loops, `elif`, `try`/`catch`/`finally`, `match`
-- string and list indexing
+- loops, `elif`, `try`/`catch`/`finally`, `match`
+- string and list indexing; list literals
 
-These are the next milestones. `fn` definitions build directly on the
+These are the next milestones. Functions build directly on the
 call-expression machinery landed with the native registry; the standard
-library (this milestone) is itself native callbacks and will later be
-supplemented by `fn`-based library code.
+library is itself native callbacks and can be supplemented by
+`fn`-based library code going forward.

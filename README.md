@@ -80,8 +80,9 @@ The project is organized around a conventional compiler/runtime pipeline:
 - runtime memory management
 
 The present milestone implements the lexer, AST, parser, tree-walking
-evaluator, environment model, native call expressions, and the native
-standard library; bytecode, VM, closures, functions, and lists remain planned.
+evaluator, environment model, native call expressions, user-defined functions
+with recursion and closures, and the native standard library; bytecode, VM,
+and lists remain planned.
 
 ## Project status
 
@@ -96,12 +97,14 @@ Current milestone:
 - comparison operators (`< <= > >=`), float remainder, and type-safe errors
 - native standard library (`print`, `len`, `int`, `float`, `str`, `type`),
   with `VALUE_ERROR` reporting (see docs/stdlib.md)
+- user-defined functions (`fn name(params):`) with local frames, lexical
+  closures, recursion under a depth guard, and `return` semantics
+  (see docs/functions.md)
 - command-line interpreter: `./femlang examples/basic.fem`
 - automated regression test suite: `make test`
 
 Planned next milestones:
 
-- function declarations
 - loops and lists
 - bytecode compiler and VM
 

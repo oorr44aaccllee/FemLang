@@ -33,6 +33,9 @@ standard-library (builtins) interfaces �?" the same interfaces future tools
 - call expressions: empty and argument lists, argument expressions, calls as
   operands (precedence), nested calls (`f(g(2))(3)`), calls in declarations,
   and a missing closing paren is a parse error;
+- function definitions: name and parameter list shape, the zero-parameter
+  form, and error cases (missing name, missing `(`, non-identifier parameter,
+  missing block);
 - invalid declarations (`let = 5`), missing value (`let x`), and invalid
   assignments (`x =`) are parse errors.
 
@@ -61,7 +64,17 @@ standard-library (builtins) interfaces �?" the same interfaces future tools
   null;
 - `VALUE_ERROR` propagation: a native returning `value_error("boom")` stops the
   program with that message through the error channel, even when the call is
-  an operand of a larger expression.
+  an operand of a larger expression;
+- user-defined functions: basic calls, local scope isolation, implicit (null)
+  and early `return`, `return` inside `if`, calls inside expressions and
+  nested calls, user functions calling natives (including surfaced native
+  errors), recursion (fib, deep-but-legal recursion at depth 200, mutual
+  recursion), the recursion guard (`recursion limit exceeded`), arity errors,
+  `return outside a function`, immutable function bindings and parameters,
+  closures (capture by variable, shared mutable state, escaping closures with
+  independent state, `make_counter`, higher-order functions and function
+  composition), functional value flow (`let g = f; g()`), and re-declaring a
+  function name.
 
 ### Standard library
 
@@ -72,8 +85,9 @@ standard-library (builtins) interfaces �?" the same interfaces future tools
 - `float`: integer/bool/float conversion; type and arity errors;
 - `str`: display form of integers, floats, booleans, null, and identity for
   strings;
-- `type`: `"int"`, `"float"`, `"bool"`, `"string"`, `"null"`, `"native"`;
-  arity errors;
+- `type`: `"int"`, `"float"`, `"bool"`, `"string"`, `"null"`, `"native"`,
+  and `"fn"` for a user-defined function value; `str(f)` renders
+  `<fn 'name'>`; `print(f)` displays the same; arity errors;
 - `print`: success paths (zero or more arguments, mixed types) return null
   with no error.
 
@@ -94,6 +108,11 @@ standard-library (builtins) interfaces �?" the same interfaces future tools
 - native values: borrowed function pointer, shallow clone, free resets to null;
 - error values: owned message, deep clone (distinct buffers), free resets to
   null;
+- function values: `value_function()` deep-copies name/parameters, borrows the
+  body, retains the closure; clones duplicate name/parameters (independent
+  buffers) while sharing the body and re-retaining the closure; invalid inputs
+  (NULL name or closure) yield `VALUE_NULL`; `value_to_string()` renders
+  `<fn 'name'>`;
 - `value_to_string()`: display form of every value type, including raw string
   identity (distinct buffer) and the null-argument case.
 

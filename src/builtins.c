@@ -94,6 +94,7 @@ static Value native_type(size_t argument_count, const Value *arguments) {
         case VALUE_FLOAT: name = "float"; break;
         case VALUE_STRING: name = "string"; break;
         case VALUE_NATIVE: name = "native"; break;
+        case VALUE_FN: name = "fn"; break;
         case VALUE_ERROR: name = "error"; break;
         default: name = "unknown"; break;
     }

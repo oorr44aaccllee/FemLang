@@ -642,6 +642,92 @@ static AstNode *parse_return(Parser *parser) {
     return node;
 }
 
+/*
+ * Parses a function definition:
+ *
+ *     fn name(param, other, ...):
+ *         body statements
+ *
+ * The opening '(' is required (even for zero parameters); the parameter list
+ * holds AST_IDENTIFIER nodes and the body is a block. The function name is
+ * stored separately because the runtime error messages need it.
+ */
+static AstNode *parse_function(Parser *parser) {
+    Token keyword = parser->previous;
+
+    if (!check(parser, TOKEN_IDENTIFIER)) {
+        error_here(parser, "expected function name");
+        return NULL;
+    }
+    Token name = parser->current;
+    advance(parser);
+
+    if (!match(parser, TOKEN_LEFT_PAREN)) {
+        error_here(parser, "expected '(' after function name");
+        return NULL;
+    }
+
+    AstNode *node = ast_new(AST_FUNCTION, keyword.line, keyword.column);
+    if (node == NULL) {
+        return NULL;
+    }
+    node->as.function.name = copy_identifier(&name);
+    if (node->as.function.name == NULL) {
+        ast_free(node);
+        return NULL;
+    }
+
+    if (!check(parser, TOKEN_RIGHT_PAREN)) {
+        for (;;) {
+            if (!check(parser, TOKEN_IDENTIFIER)) {
+                error_here(parser, "expected parameter name");
+                ast_free(node);
+                return NULL;
+            }
+            Token param = parser->current;
+            advance(parser);
+            AstNode *param_node = ast_new(AST_IDENTIFIER, param.line, param.column);
+            if (param_node == NULL) {
+                ast_free(node);
+                return NULL;
+            }
+            param_node->as.identifier = copy_identifier(&param);
+            if (param_node->as.identifier == NULL) {
+                ast_free(param_node);
+                ast_free(node);
+                return NULL;
+            }
+            if (!ast_list_push(&node->as.function.parameters, param_node)) {
+                ast_free(param_node);
+                ast_free(node);
+                return NULL;
+            }
+            if (!match(parser, TOKEN_COMMA)) {
+                break;
+            }
+        }
+    }
+
+    if (!match(parser, TOKEN_RIGHT_PAREN)) {
+        error_here(parser, "expected ')' after parameters");
+        ast_free(node);
+        return NULL;
+    }
+
+    if (!match(parser, TOKEN_COLON)) {
+        error_here(parser, "expected ':' after parameters");
+        ast_free(node);
+        return NULL;
+    }
+
+    node->as.function.body = block(parser, keyword.line, keyword.column);
+    if (node->as.function.body == NULL) {
+        ast_free(node);
+        return NULL;
+    }
+    return node;
+}
+
 static AstNode *statement(Parser *parser) {
     while (match(parser, TOKEN_NEWLINE)) {
         /* skip blank lines */
@@ -661,6 +747,10 @@ static AstNode *statement(Parser *parser) {
 
     if (match(parser, TOKEN_RETURN)) {
         return parse_return(parser);
+    }
+
+    if (match(parser, TOKEN_FN)) {
+        return parse_function(parser);
     }
 
     return expression_statement(parser);
