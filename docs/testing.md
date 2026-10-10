@@ -38,6 +38,10 @@ standard-library (builtins) interfaces �?" the same interfaces future tools
 - function definitions: name and parameter list shape, the zero-parameter
   form, and error cases (missing name, missing `(`, non-identifier parameter,
   missing block);
+- loops: `while` shape, `for i in low..high` shape (integer and identifier
+  bounds), `break`/`continue` statements inside a loop body, and error cases
+  (`while` without a body or colon, `for` without a variable, `in`, `..`, or
+  `:`);
 - invalid declarations (`let = 5`), missing value (`let x`), and invalid
   assignments (`x =`) are parse errors.
 
@@ -80,7 +84,14 @@ standard-library (builtins) interfaces �?" the same interfaces future tools
   closures (capture by variable, shared mutable state, escaping closures with
   independent state, `make_counter`, higher-order functions and function
   composition), functional value flow (`let g = f; g()`), and re-declaring a
-  function name.
+  function name;
+- loops: `while` iteration counting, `for` sums (ascending and descending
+  ranges, empty ranges), `break` from `while` and `for`, `continue` skipping
+  odd/even iterations, nested loops (inner `break` exits only the inner
+  loop), `return` from inside a loop inside a function, loop variable binding
+  (remains bound after the loop, rebinding it does not disturb the counter),
+  and the runtime errors (`break outside a loop`, `continue outside a
+  loop`, `for range requires two integers`).
 
 ### Standard library
 

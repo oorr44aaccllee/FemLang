@@ -10,7 +10,7 @@ prototype:
 - lexer tokenization with indentation handling
 - AST definitions
 - parser for declarations, expression statements, assignments, calls,
-  and `if`/`else`
+  `if`/`elif`/`else`, `while`, `for ... in ...`, `break`, and `continue`
 - runtime tree-walking evaluator
 - command-line execution of a `.fem` file (`src/eval_main.c`)
 - environment model with immutable/mutable bindings and an error channel
@@ -41,6 +41,10 @@ The interpreter currently supports:
   `return` (early or implicit null) and `return` outside a function is an error
 - `if` / `elif` / `else` control flow (elif short-circuits: later conditions
   are only reached when earlier ones were false)
+- loops: `while` condition loops, `for i in low..high` integer ranges
+  (upper bound exclusive, descending when `low > high`), and `break` /
+  `continue` (with the `slay` / `skip` aliases); `return` from inside a loop
+  exits the loop and the function
 - unary minus and logical negation
 - error reporting through the environment error channel
 
@@ -61,13 +65,14 @@ See also:
 - `examples/calls.fem` (calls, comparisons, remainder);
 - `examples/stdlib.fem` (standard library tour);
 - `examples/functions.fem` (functions, recursion, closures);
-- `docs/stdlib.md` for the native standard library reference and
-  `docs/functions.md` for the function and closure reference.
+- `examples/loops.fem` (while, for ranges, break/continue);
+- `docs/stdlib.md` for the native standard library reference,
+  `docs/functions.md` for the function and closure reference, and
+  `docs/loops.md` for the loop reference.
 
 ## Not yet implemented
 
-- loops (`for`/`in`, `while`, `break`, `continue`), `try`/`catch`/`finally`,
-  `match`
+- `try`/`catch`/`finally`, `match`
 - string and list indexing; list literals
 
 These are the next milestones. Functions build directly on the

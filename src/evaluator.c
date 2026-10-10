@@ -413,6 +413,9 @@ struct Environment {
     Value return_value;
     FemNativeRegistry natives;
     unsigned call_depth;
+    unsigned loop_depth;
+    bool loop_broken;
+    bool loop_continue;
     char error_message[256];
 };
 
@@ -957,7 +960,8 @@ static Value eval(Environment *env, const AstNode *node) {
                 Value current = eval(env, node->as.block.statements.items[i]);
                 value_free(&last);
                 last = current;
-                if (env->call_frame && env->returned) {
+                if ((env->call_frame && env->returned) ||
+                    env->loop_broken || env->loop_continue) {
                     break;
                 }
             }
@@ -972,6 +976,96 @@ static Value eval(Environment *env, const AstNode *node) {
                             ? node->as.if_statement.then_branch
                             : node->as.if_statement.else_branch);
         }
+
+        case AST_WHILE: {
+            env->loop_depth++;
+            for (;;) {
+                Value condition = eval(env, node->as.while_statement.condition);
+                bool is_truthy = value_truthy(&condition);
+                value_free(&condition);
+                if (env_error(env) != NULL || !is_truthy) {
+                    break;
+                }
+                Value body_value = eval(env, node->as.while_statement.body);
+                value_free(&body_value);
+                if ((env->call_frame && env->returned) || env->loop_broken) {
+                    if (env->loop_broken) {
+                        env->loop_broken = false;
+                    }
+                    break;
+                }
+                if (env->loop_continue) {
+                    env->loop_continue = false;
+                    continue;
+                }
+            }
+            env->loop_depth--;
+            return value_null();
+        }
+
+        case AST_FOR: {
+            Value low = eval(env, node->as.for_statement.low);
+            Value high = eval(env, node->as.for_statement.high);
+            if (low.type != VALUE_INT || high.type != VALUE_INT) {
+                value_free(&low);
+                value_free(&high);
+                env_record_error(env, "for range requires two integers");
+                return value_null();
+            }
+            env->loop_depth++;
+            int64_t i = low.as.integer;
+            int step = low.as.integer <= high.as.integer ? 1 : -1;
+            for (;;) {
+                if (step > 0 ? i >= high.as.integer : i <= high.as.integer) {
+                    break;
+                }
+                Value counter = value_int(i);
+                if (!env_define(env, node->as.for_statement.variable,
+                                &counter, true)) {
+                    value_free(&counter);
+                    env->loop_depth--;
+                    value_free(&low);
+                    value_free(&high);
+                    return value_null();
+                }
+                value_free(&counter);
+                Value body_value = eval(env, node->as.for_statement.body);
+                value_free(&body_value);
+                if (env->loop_broken) {
+                    env->loop_broken = false;
+                    break;
+                }
+                i += step;
+                if (env->loop_continue) {
+                    env->loop_continue = false;
+                    continue;
+                }
+                if (env_error(env) != NULL ||
+                    (env->call_frame && env->returned)) {
+                    break;
+                }
+            }
+            env->loop_depth--;
+            value_free(&low);
+            value_free(&high);
+            return value_null();
+        }
+
+        case AST_BREAK:
+            if (env->loop_depth == 0) {
+                env_record_error(env, "break outside a loop");
+            } else {
+                env->loop_broken = true;
+            }
+            return value_null();
+
+        case AST_CONTINUE:
+            if (env->loop_depth == 0) {
+                env_record_error(env, "continue outside a loop");
+            } else {
+                env->loop_continue = true;
+            }
+            return value_null();
 
         case AST_UNARY: {
             Value operand = eval(env, node->as.unary.operand);

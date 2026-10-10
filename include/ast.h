@@ -24,7 +24,11 @@ typedef enum {
     AST_EXPRESSION_STATEMENT,
     AST_RETURN,
     AST_IF,
-    AST_FUNCTION
+    AST_FUNCTION,
+    AST_WHILE,
+    AST_FOR,
+    AST_BREAK,
+    AST_CONTINUE
 } AstNodeType;
 
 typedef struct AstNode AstNode;
@@ -55,6 +59,8 @@ struct AstNode {
         struct { AstNode *value; } return_statement;
         struct { AstNode *condition; AstNode *then_branch; AstNode *else_branch; } if_statement;
         struct { char *name; AstNodeList parameters; AstNode *body; } function;
+        struct { AstNode *condition; AstNode *body; } while_statement;
+        struct { char *variable; AstNode *low; AstNode *high; AstNode *body; } for_statement;
         struct { AstNodeList statements; } block;
     } as;
 };

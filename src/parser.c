@@ -509,6 +509,111 @@ static AstNode *if_statement(Parser *parser) {
     return node;
 }
 
+static AstNode *while_statement(Parser *parser) {
+    Token keyword = parser->previous;
+
+    AstNode *condition = expression(parser);
+    if (condition == NULL) {
+        return NULL;
+    }
+    if (!match(parser, TOKEN_COLON)) {
+        error_here(parser, "expected ':' after condition");
+        ast_free(condition);
+        return NULL;
+    }
+
+    AstNode *body = block(parser, keyword.line, keyword.column);
+    if (body == NULL) {
+        ast_free(condition);
+        return NULL;
+    }
+
+    AstNode *node = ast_new(AST_WHILE, keyword.line, keyword.column);
+    if (node == NULL) {
+        ast_free(condition);
+        ast_free(body);
+        return NULL;
+    }
+    node->as.while_statement.condition = condition;
+    node->as.while_statement.body = body;
+    return node;
+}
+
+static AstNode *for_statement(Parser *parser) {
+    Token keyword = parser->previous;
+
+    if (!check(parser, TOKEN_IDENTIFIER)) {
+        error_here(parser, "expected loop variable name after 'for'");
+        return NULL;
+    }
+    Token variable = parser->current;
+    advance(parser);
+
+    if (!match(parser, TOKEN_IN)) {
+        error_here(parser, "expected 'in' after loop variable");
+        return NULL;
+    }
+
+    AstNode *low = expression(parser);
+    if (low == NULL) {
+        return NULL;
+    }
+    if (!match(parser, TOKEN_DOT_DOT)) {
+        error_here(parser, "expected '..' between range bounds");
+        ast_free(low);
+        return NULL;
+    }
+
+    AstNode *high = expression(parser);
+    if (high == NULL) {
+        ast_free(low);
+        return NULL;
+    }
+    if (!match(parser, TOKEN_COLON)) {
+        error_here(parser, "expected ':' after range");
+        ast_free(low);
+        ast_free(high);
+        return NULL;
+    }
+
+    AstNode *body = block(parser, keyword.line, keyword.column);
+    if (body == NULL) {
+        ast_free(low);
+        ast_free(high);
+        return NULL;
+    }
+
+    AstNode *node = ast_new(AST_FOR, keyword.line, keyword.column);
+    if (node == NULL) {
+        ast_free(low);
+        ast_free(high);
+        ast_free(body);
+        return NULL;
+    }
+    node->as.for_statement.variable = copy_identifier(&variable);
+    if (node->as.for_statement.variable == NULL) {
+        ast_free(node);
+        ast_free(low);
+        ast_free(high);
+        ast_free(body);
+        return NULL;
+    }
+    node->as.for_statement.low = low;
+    node->as.for_statement.high = high;
+    node->as.for_statement.body = body;
+    return node;
+}
+
+static AstNode *break_statement(Parser *parser) {
+    Token keyword = parser->previous;
+    return ast_new(AST_BREAK, keyword.line, keyword.column);
+}
+
+static AstNode *continue_statement(Parser *parser) {
+    Token keyword = parser->previous;
+    return ast_new(AST_CONTINUE, keyword.line, keyword.column);
+}
+
 static AstNode *parse_declaration(Parser *parser) {
     Token keyword = parser->previous;
     bool mutable_binding = keyword.type == TOKEN_MUT;
@@ -763,6 +868,22 @@ static AstNode *statement(Parser *parser) {
 
     if (match(parser, TOKEN_FN)) {
         return parse_function(parser);
+    }
+
+    if (match(parser, TOKEN_WHILE)) {
+        return while_statement(parser);
+    }
+
+    if (match(parser, TOKEN_FOR)) {
+        return for_statement(parser);
+    }
+
+    if (match(parser, TOKEN_BREAK)) {
+        return break_statement(parser);
+    }
+
+    if (match(parser, TOKEN_CONTINUE)) {
+        return continue_statement(parser);
     }
 
     if (check(parser, TOKEN_ELIF) || check(parser, TOKEN_ELSE)) {

@@ -58,7 +58,8 @@ same type (different types are simply not equal).
 
 ## Current limitations
 
-This milestone does not yet implement loops. User-defined functions
+Loops are implemented and covered in `docs/loops.md` (`while`,
+`for i in low..high`, `break`, `continue`). User-defined functions
 (`fn name(params):`) with recursion and closures are implemented
 (docs/functions.md), as is native C function invocation from FemLang source
 (`f(...)`, including the bundled `print` native); see docs/ownership.md for

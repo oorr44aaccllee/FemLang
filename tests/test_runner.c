@@ -330,10 +330,11 @@ static void test_lexer_operators(void) {
         TOKEN_LEFT_PAREN, TOKEN_RIGHT_PAREN,
         TOKEN_LEFT_BRACKET, TOKEN_RIGHT_BRACKET,
         TOKEN_LEFT_BRACE, TOKEN_RIGHT_BRACE,
-        TOKEN_COMMA, TOKEN_DOT, TOKEN_COLON, TOKEN_ARROW, TOKEN_EOF
+        TOKEN_COMMA, TOKEN_DOT, TOKEN_DOT_DOT, TOKEN_COLON, TOKEN_ARROW,
+        TOKEN_EOF
     };
     expect_tokens(
-        "+ - * / % = == ! != < <= > >= ( ) [ ] { } , . : ->",
+        "+ - * / % = == ! != < <= > >= ( ) [ ] { } , . .. : ->",
         expected, sizeof(expected) / sizeof(expected[0]));
 }
 
@@ -860,6 +861,116 @@ static void test_parser_function_missing_block(void) {
     CHECK(parser.had_error);
 }
 
+static void test_parser_while_loop(void) {
+    Parser parser;
+    AstNode *program = parse_program("while x > 0:\n    y\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    CHECK(stmt->type == AST_WHILE);
+    CHECK(stmt->as.while_statement.condition != NULL);
+    CHECK(stmt->as.while_statement.condition->type == AST_BINARY);
+    CHECK(stmt->as.while_statement.body != NULL);
+    CHECK(stmt->as.while_statement.body->type == AST_BLOCK);
+    CHECK(stmt->as.while_statement.body->as.block.statements.count == 1);
+    ast_free(program);
+}
+
+static void test_parser_for_loop(void) {
+    Parser parser;
+    AstNode *program = parse_program(
+        "for i in 1..10:\n"
+        "    print(i)\n",
+        &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    CHECK(stmt->type == AST_FOR);
+    CHECK(strcmp(stmt->as.for_statement.variable, "i") == 0);
+    CHECK(stmt->as.for_statement.low->type == AST_INTEGER);
+    CHECK(stmt->as.for_statement.low->as.integer == 1);
+    CHECK(stmt->as.for_statement.high->type == AST_INTEGER);
+    CHECK(stmt->as.for_statement.high->as.integer == 10);
+    CHECK(stmt->as.for_statement.body->type == AST_BLOCK);
+    ast_free(program);
+}
+
+static void test_parser_for_loop_identifiers(void) {
+    Parser parser;
+    AstNode *program = parse_program(
+        "for x in low..high:\n"
+        "    x\n",
+        &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    CHECK(stmt->type == AST_FOR);
+    CHECK(strcmp(stmt->as.for_statement.variable, "x") == 0);
+    CHECK(stmt->as.for_statement.low->type == AST_IDENTIFIER);
+    CHECK(strcmp(stmt->as.for_statement.low->as.identifier, "low") == 0);
+    CHECK(stmt->as.for_statement.high->type == AST_IDENTIFIER);
+    CHECK(strcmp(stmt->as.for_statement.high->as.identifier, "high") == 0);
+    ast_free(program);
+}
+
+static void test_parser_break_continue(void) {
+    Parser parser;
+    AstNode *program = parse_program(
+        "while true:\n"
+        "    break\n"
+        "    continue\n",
+        &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    CHECK(stmt->type == AST_WHILE);
+    AstNode *body = stmt->as.while_statement.body;
+    CHECK(body->as.block.statements.count == 2);
+    CHECK(body->as.block.statements.items[0]->type == AST_BREAK);
+    CHECK(body->as.block.statements.items[1]->type == AST_CONTINUE);
+    ast_free(program);
+}
+
+static void test_parser_loop_errors(void) {
+    Parser parser;
+    AstNode *program = parse_program("while true:\n", &parser);
+    CHECK(program == NULL);
+    CHECK(parser.had_error);
+
+    program = parse_program("while x\n    y\n", &parser);
+    CHECK(program == NULL);
+    CHECK(parser.had_error);
+    CHECK(strstr(parser.error_message, "expected ':' after condition") != NULL);
+
+    program = parse_program("for :\n    1\n", &parser);
+    CHECK(program == NULL);
+    CHECK(parser.had_error);
+    CHECK(strstr(parser.error_message, "expected loop variable name") != NULL);
+
+    program = parse_program("for i:\n    1\n", &parser);
+    CHECK(program == NULL);
+    CHECK(parser.had_error);
+    CHECK(strstr(parser.error_message, "expected 'in' after loop variable") != NULL);
+
+    program = parse_program("for i in 5:\n    1\n", &parser);
+    CHECK(program == NULL);
+    CHECK(parser.had_error);
+    CHECK(strstr(parser.error_message, "expected '..' between range bounds") != NULL);
+
+    program = parse_program("for i in 1..2\n    1\n", &parser);
+    CHECK(program == NULL);
+    CHECK(parser.had_error);
+    CHECK(strstr(parser.error_message, "expected ':' after range") != NULL);
+}
+
 /*
  * Evaluator tests
  */
@@ -1068,6 +1179,165 @@ static void test_eval_if_elif_in_function(void) {
         "        return 1\n"
         "classify(42)\n",
         1);
+}
+
+static void test_eval_while_loop(void) {
+    check_int_result(
+        "mut n = 3\n"
+        "mut out = 0\n"
+        "while n > 0:\n"
+        "    out = out + 100 + n\n"
+        "    n = n - 1\n"
+        "out\n",
+        306);
+    check_int_result("while false:\n    1\n0\n", 0);
+}
+
+static void test_eval_for_loop(void) {
+    check_int_result(
+        "mut total = 0\n"
+        "for i in 1..6:\n"
+        "    total = total + i\n"
+        "total\n",
+        15);
+    check_int_result(
+        "mut out = 0\n"
+        "for i in 5..1:\n"
+        "    out = out * 10 + i\n"
+        "out\n",
+        5432);
+    check_int_result("for i in 1..1:\n    1\n0\n", 0);
+}
+
+static void test_eval_loop_break(void) {
+    check_int_result(
+        "mut total = 0\n"
+        "mut i = 0\n"
+        "while true:\n"
+        "    i = i + 1\n"
+        "    if i > 3:\n"
+        "        break\n"
+        "    total = total + i\n"
+        "total\n",
+        6);
+    check_int_result(
+        "mut total = 0\n"
+        "for i in 1..100:\n"
+        "    if i == 5:\n"
+        "        break\n"
+        "    total = total + i\n"
+        "total\n",
+        10);
+}
+
+static void test_eval_loop_continue(void) {
+    check_int_result(
+        "mut out = 0\n"
+        "mut i = 0\n"
+        "while i < 6:\n"
+        "    i = i + 1\n"
+        "    if i % 2 == 0:\n"
+        "        continue\n"
+        "    out = out + i\n"
+        "out\n",
+        9);
+    check_int_result(
+        "mut out = 0\n"
+        "for i in 1..6:\n"
+        "    if i % 2 == 0:\n"
+        "        continue\n"
+        "    out = out + i\n"
+        "out\n",
+        9);
+}
+
+static void test_eval_nested_loops(void) {
+    check_int_result(
+        "mut inner_total = 0\n"
+        "for a in 1..4:\n"
+        "    for b in 1..4:\n"
+        "        inner_total = inner_total + 1\n"
+        "inner_total\n",
+        9);
+    check_int_result(
+        "mut count = 0\n"
+        "for a in 1..3:\n"
+        "    for b in 1..10:\n"
+        "        if b == 2:\n"
+        "            break\n"
+        "        count = count + 1\n"
+        "count\n",
+        2);
+}
+
+static void test_eval_loop_return_in_function(void) {
+    check_int_result(
+        "fn find(t):\n"
+        "    for i in 1..10:\n"
+        "        if i * i == t:\n"
+        "            return i\n"
+        "    return -1\n"
+        "find(49)\n",
+        7);
+    check_int_result(
+        "fn find(t):\n"
+        "    for i in 1..10:\n"
+        "        if i * i == t:\n"
+        "            return i\n"
+        "    return -1\n"
+        "find(64)\n",
+        8);
+    check_int_result(
+        "fn find(t):\n"
+        "    for i in 1..10:\n"
+        "        if i * i == t:\n"
+        "            return i\n"
+        "    return -1\n"
+        "find(120)\n",
+        -1);
+}
+
+static void test_eval_loop_variable_binding(void) {
+    check_int_result("for i in 1..4:\n    0\ni\n", 3);
+    check_int_result(
+        "mut iterations = 0\n"
+        "for i in 1..4:\n"
+        "    i = i + 100\n"
+        "    iterations = iterations + 1\n"
+        "iterations\n",
+        3);
+}
+
+static void test_eval_loop_errors(void) {
+    RunResult run = run_source("break\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(strstr(run.error, "break outside a loop") != NULL);
+    value_free(&run.result);
+
+    run = run_source("continue\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(strstr(run.error, "continue outside a loop") != NULL);
+    value_free(&run.result);
+
+    run = run_source("fn f():\n    break\nf()\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(strstr(run.error, "break outside a loop") != NULL);
+    value_free(&run.result);
+
+    run = run_source("for x in 1.5..3:\n    1\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(strstr(run.error, "for range requires two integers") != NULL);
+    value_free(&run.result);
+
+    run = run_source("for x in \"a\"..\"b\":\n    1\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] != '\0');
+    CHECK(strstr(run.error, "for range requires two integers") != NULL);
+    value_free(&run.result);
 }
 
 static void test_eval_integer_operations(void) {
@@ -2104,6 +2374,11 @@ int main(void) {
     test_parser_function_no_parameters();
     test_parser_function_errors();
     test_parser_function_missing_block();
+    test_parser_while_loop();
+    test_parser_for_loop();
+    test_parser_for_loop_identifiers();
+    test_parser_break_continue();
+    test_parser_loop_errors();
 
     /* Evaluator */
     test_eval_let_declaration();
@@ -2124,6 +2399,14 @@ int main(void) {
     test_eval_if_elif_short_circuit();
     test_eval_if_elif_no_branch_taken();
     test_eval_if_elif_in_function();
+    test_eval_while_loop();
+    test_eval_for_loop();
+    test_eval_loop_break();
+    test_eval_loop_continue();
+    test_eval_nested_loops();
+    test_eval_loop_return_in_function();
+    test_eval_loop_variable_binding();
+    test_eval_loop_errors();
     test_eval_integer_operations();
     test_eval_division_by_zero_fails();
     test_eval_undefined_lookup_fails();
