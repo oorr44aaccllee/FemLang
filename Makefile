@@ -9,7 +9,7 @@ OBJ = $(SRC:.c=.o)
 TEST_OBJ = $(TEST_SRC:.c=.o)
 HEADERS = $(wildcard include/*.h)
 
-$(OBJ) $(TEST_OBJ): $(HEADERS)
+.DEFAULT_GOAL := all
 
 .PHONY: all clean test asan
 
@@ -24,6 +24,8 @@ $(TEST_TARGET): $(TEST_OBJ)
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(OBJ) $(TEST_OBJ): $(HEADERS)
+
 test: $(TEST_TARGET)
 	./$(TEST_TARGET)
 
@@ -33,4 +35,4 @@ asan: clean $(TARGET) $(TEST_TARGET)
 	./$(TEST_TARGET)
 
 clean:
-	rm -f $(OBJ) $(TEST_OBJ) $(TARGET) $(TEST_TARGET)
+	rm -f $(OBJ) $(TEST_OBJ) $(TARGET) $(TEST_TARGET) $(TARGET).exe $(TEST_TARGET).exe

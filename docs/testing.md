@@ -11,7 +11,8 @@ standard-library (builtins) interfaces �?" the same interfaces future tools
 ### Lexer
 
 - keywords, including the playful aliases (`spark` -> `let`, `serve` ->
-  `return`, `slay` -> `break`, `skip` -> `continue`);
+  `return`, `slay` -> `break`, `skip` -> `continue`, `uwu` -> `fn`, `owo` ->
+  `if`, `nya` -> `else`, `rawr` -> `while`);
 - identifiers, integer literals, float literals, string literals;
 - unterminated strings (lexer error);
 - operators and punctuation;

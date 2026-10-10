@@ -77,7 +77,8 @@ static TokenType lookup_keyword(const char *start, size_t length) {
         "let",    "spark",   "mut",    "fn",    "return", "serve",
         "if",     "elif",    "else",   "for",   "in",     "while",
         "break",  "slay",    "continue", "skip", "true",  "false",
-        "null",   "try",     "catch",  "finally", "match"
+        "null",   "try",     "catch",  "finally", "match",
+        "uwu",    "owo",     "nya",    "rawr"
     };
     static const TokenType keyword_types[] = {
         TOKEN_LET,   TOKEN_LET,   TOKEN_MUT,   TOKEN_FN,
@@ -85,7 +86,8 @@ static TokenType lookup_keyword(const char *start, size_t length) {
         TOKEN_ELSE,  TOKEN_FOR,   TOKEN_IN,    TOKEN_WHILE,
         TOKEN_BREAK, TOKEN_BREAK, TOKEN_CONTINUE, TOKEN_CONTINUE,
         TOKEN_TRUE,  TOKEN_FALSE, TOKEN_NULL,  TOKEN_TRY,
-        TOKEN_CATCH, TOKEN_FINALLY, TOKEN_MATCH
+        TOKEN_CATCH, TOKEN_FINALLY, TOKEN_MATCH,
+        TOKEN_FN,    TOKEN_IF,    TOKEN_ELSE,  TOKEN_WHILE
     };
 
     for (size_t i = 0; i < sizeof(keyword_types) / sizeof(keyword_types[0]); i++) {

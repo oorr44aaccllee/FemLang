@@ -22,6 +22,9 @@ display form. Returns `null`.
 print("hi", 42, true, 3.5)   # hi 42 true 3.5
 ```
 
+`meow` is registered as an alias of `print` (the same native callback):
+`meow("hi")` behaves exactly like `print("hi")`. See `docs/playful-aliases.md`.
+
 ## `len(s)`
 
 Length of a string (byte count) or a list (element count). Expects exactly one

@@ -50,6 +50,11 @@ return "Hello, " + name + "!"
 
 This keeps the language welcoming without making it feel gimmicky or less suitable for serious software work.
 
+The full set of playful aliases is purely optional sugar over the conventional
+core: `spark` (`let`), `serve` (`return`), `slay` (`break`), `skip`
+(`continue`), `uwu` (`fn`), `owo` (`if`), `nya` (`else`), `rawr` (`while`), and
+`meow` (`print`, a native alias). See docs/playful-aliases.md.
+
 ## Example syntax
 
 ```femlang

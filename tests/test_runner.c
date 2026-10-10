@@ -302,6 +302,12 @@ static void test_lexer_playful_aliases(void) {
     };
     expect_tokens("spark let serve return slay skip",
                   expected, sizeof(expected) / sizeof(expected[0]));
+
+    const TokenType keywords[] = {
+        TOKEN_FN, TOKEN_IF, TOKEN_ELSE, TOKEN_WHILE, TOKEN_EOF
+    };
+    expect_tokens("uwu owo nya rawr",
+                  keywords, sizeof(keywords) / sizeof(keywords[0]));
 }
 
 static void test_lexer_identifiers(void) {
@@ -2317,6 +2323,29 @@ static void test_stdlib_print_ok(void) {
     check_stdlib_null("print(\"a\", \"b\", 3)\n");
     check_stdlib_null("print()\n");
     check_stdlib_null("print(len(\"abc\"))\n");
+    /* meow is a registered alias of print. */
+    check_stdlib_null("meow(1)\n");
+    check_stdlib_null("meow(\"a\", [1, 2])\n");
+    check_stdlib_string("type(meow)\n", "native");
+}
+
+static void test_eval_playful_aliases(void) {
+    check_int_result(
+        "uwu sign(n):\n"
+        "    owo n > 0:\n"
+        "        return 1\n"
+        "    nya:\n"
+        "        return 0\n"
+        "sign(5)\n",
+        1);
+    check_int_result(
+        "mut n = 3\n"
+        "mut total = 0\n"
+        "rawr n > 0:\n"
+        "    total = total + n\n"
+        "    n = n - 1\n"
+        "total\n",
+        6);
 }
 
 static void test_eval_ordered_comparisons(void) {
@@ -2796,6 +2825,7 @@ int main(void) {
     test_stdlib_str();
     test_stdlib_type();
     test_stdlib_print_ok();
+    test_eval_playful_aliases();
 
     /* Native registry */
     test_native_register_and_lookup();
