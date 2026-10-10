@@ -110,10 +110,18 @@ static void print_ast(const AstNode *node, size_t depth) {
             print_ast(node->as.while_statement.body, depth + 1);
             break;
         case AST_FOR:
-            printf("FOR %s in ..\n", node->as.for_statement.variable);
+            printf("FOR %s in\n", node->as.for_statement.variable);
             print_ast(node->as.for_statement.low, depth + 1);
-            print_ast(node->as.for_statement.high, depth + 1);
+            if (node->as.for_statement.high != NULL) {
+                puts("  ..");
+                print_ast(node->as.for_statement.high, depth + 1);
+            }
             print_ast(node->as.for_statement.body, depth + 1);
+            break;
+        case AST_INDEX:
+            puts("INDEX");
+            print_ast(node->as.index_expression.object, depth + 1);
+            print_ast(node->as.index_expression.index, depth + 1);
             break;
         case AST_BREAK:
             puts("BREAK");

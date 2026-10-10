@@ -99,6 +99,10 @@ void ast_free(AstNode *node) {
             ast_free(node->as.for_statement.high);
             ast_free(node->as.for_statement.body);
             break;
+        case AST_INDEX:
+            ast_free(node->as.index_expression.object);
+            ast_free(node->as.index_expression.index);
+            break;
         case AST_BREAK:
         case AST_CONTINUE:
             break;

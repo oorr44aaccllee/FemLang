@@ -137,6 +137,24 @@ New behavior from Phase 9: `while` and `for i in low..high` loops, `break` /
 propagating out of the function, and the new `..` range token.
 `docs/loops.md` documents the feature; `examples/loops.fem` tours it.
 
+## Phase 10 resolution (2026-10-10)
+
+Phase 10 landed lists, closing the collection gap:
+
+| Audit entry | Disposition in Phase 10 |
+| --- | --- |
+| `AST_LIST` dead (never parsed; evaluated to `value_null()`) | **Resolved.** `primary()` parses `[..]` literals (heterogeneous, nestable, trailing comma allowed) and `case AST_LIST` evaluates them into a `VALUE_LIST`. |
+| No indexing of any value | **Resolved.** New `AST_INDEX` and postfix `[expr]` in `call`/`call_tail`; `xs[i]` reads lists and strings (bounds-checked, integer index required), returning a fresh copy (a one-character string for strings). Indexing binds tighter than unary/binary and chains (`m[0][1]`, `f(x)[0]`). |
+| `for` could only iterate integer ranges | **Resolved.** The `..` in a `for` header is now optional: without it the header is `for x in xs:` list mode, iterating the elements in order (non-list operand -> `for in requires a list`). `AST_FOR` reuses the existing `high` slot: `high == NULL` marks list mode. |
+| Lists need value semantics | **Resolved.** New `VALUE_LIST` (owned element array) with a `value_list()` deep-copying constructor; `value_clone`/`value_free`/`value_truthy`/`print_value`/`value_to_string` handle lists; equality is structural (extracted to `values_equal`, recursing into nested lists); `len()` and `type()` accept/return lists. Lists are immutable in this milestone (no element assignment). |
+
+New behavior from Phase 10: list literals, list/string indexing, `for x in xs:`
+iteration (`break`/`continue`/`return` behave as in range loops), structural
+`==`/`!=`, list truthiness by length, `len(list)`, `type(list) == "list"`, and
+the `[a, b, c]` display form. `docs/lists.md` documents the feature;
+`examples/lists.fem` tours it. `docs/loops.md` notes the list form, and the
+`docs/stdlib.md` `len`/`type` references were updated.
+
 ## Toolchain and sanitizer status
 
 Environment: Windows, w64devkit (GCC 16.2.0, `cc`), GNU Make 4.4.1, Git
@@ -189,7 +207,7 @@ from source inspection:
 | Gap | Location | When it bites |
 | --- | --- | --- |
 | `AST_CALL` exists and is freed/printed, but the parser never creates it and the evaluator returns `value_null()` unconditionally. | `include/ast.h`, `src/ast.c:64`, `src/parse_main.c:66`, `src/evaluator.c:557-559` | The core missing feature for Phase 5 (call expressions). Native registry (`src/native.c`) is ready. |
-| `AST_LIST` exists and is freed, but is never parsed and evaluates to `value_null()`. | `include/ast.h`, `src/evaluator.c:561-562` | Lists (Phase 10). |
+| `AST_LIST` exists and is freed, but is never parsed and evaluates to `value_null()`. | `include/ast.h`, `src/evaluator.c:561-562` | **Resolved in Phase 10** (literals, indexing, iteration). |
 | Comparison operators `< <= > >=` lex and parse (precedence table in `src/parser.c:295-296`) but the evaluator has no numeric comparison branch: ints fall into the integer default and report `integer arithmetic error` (`src/evaluator.c:513-523`); floats return null silently (`src/evaluator.c:542-548`). | equality was fixed to dispatch first (`src/evaluator.c:431`); comparisons were not | Any ordering comparison. |
 | Float `%` returns null silently (not in float `switch`). | `src/evaluator.c:526-548` | `3.5 % 2.0`. |
 | Unary minus on `INT64_MIN` is unguarded signed overflow (UB). | `src/evaluator.c:411-415` | Practically unreachable today: the positive literal `9223372036854775808` fails int64 lexing first. Must be guarded when sanitizers run. |
@@ -210,7 +228,7 @@ records the disposition:
 | Unary `-` on `INT64_MIN` unguarded | **Resolved.** Guarded: reports `integer arithmetic error` (still unreachable via literals, now safe for sanitizers). |
 | Mixed-type binary ops silent null | **Resolved (inconsistent path).** Unsupported/mixed ops report `cannot apply operator '<op>' to these values`; `==`/`!=` on different types still returns false by design. |
 | `fn`, `elif`, loops, `try`/`match` lexed but dead | **Resolved.** `fn` since Phase 7, `elif` since Phase 8, and `for`/`in`/`while`/`break`/`continue` plus the new `..` range token since Phase 9; `try`/`catch`/`finally` and `match` remain for Phase 11. |
-| `AST_LIST` dead | **Unchanged.** Phase 10. |
+| `AST_LIST` dead | **Resolved in Phase 10.** `AST_LIST` evaluates list literals; `AST_INDEX` was added for `xs[i]`. |
 | Int division-by-zero error text | **Changed.** Int `/` and `%` by zero now report `division by zero` (was folded into `integer arithmetic error`). |
 
 New public surface from Phase 5: `VALUE_NATIVE`, `value_native()`,
@@ -271,6 +289,9 @@ Dependency-driven, cheap-first:
    `continue` with per-frame loop depth and save-style control flags, and
    `return` from inside loops).
 6. **Phase 10 — lists** (`AST_LIST` evaluation, `[..]` literals, indexing).
+   — **Landed 2026-10-10, branch `phase-10-lists`** (`VALUE_LIST`, list
+   literals, `AST_INDEX` for lists and strings, optional-`..` `for x in xs:`
+   iteration, structural equality, `len`/`type`, and the `[..]` display form).
 7. **Phase 11 — error handling** (`try`/`catch`/`finally`, `match`).
 8. **Later — compiler/VM milestone** (bytecode format, `src/vm.c`,
    diagnostics interface) as originally outlined in `docs/overview.md`.

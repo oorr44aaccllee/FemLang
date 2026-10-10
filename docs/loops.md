@@ -37,6 +37,11 @@ for i in 5..1:
 `low == high` yields no iterations. Trying to iterate over non-integers is a
 runtime error (`for range requires two integers`).
 
+A `for` header without `..` iterates a list instead of a range:
+`for x in xs:` visits the elements of the list `xs` in order (a non-list
+operand is the runtime error `for in requires a list`). See `docs/lists.md`
+for lists and list iteration.
+
 The loop variable is bound in the current environment, behaves like an
 implicit `mut`, and keeps its last value after the loop:
 

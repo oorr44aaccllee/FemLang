@@ -268,6 +268,17 @@ static RunResult run_source_with_stdlib(const char *source) {
 }
 
 /*
+ * Standard library result helpers. Declared here so evaluator tests that run
+ * whole programs through the stdlib can use them before their definitions in
+ * the stdlib section below.
+ */
+static void check_stdlib_int(const char *source, int64_t expected);
+static void check_stdlib_float(const char *source, double expected);
+static void check_stdlib_string(const char *source, const char *expected);
+static void check_stdlib_error(const char *source);
+static void check_stdlib_null(const char *source);
+
+/*
  * Lexer tests
  */
 
@@ -960,15 +971,137 @@ static void test_parser_loop_errors(void) {
     CHECK(parser.had_error);
     CHECK(strstr(parser.error_message, "expected 'in' after loop variable") != NULL);
 
-    program = parse_program("for i in 5:\n    1\n", &parser);
+    program = parse_program("for i in 0..\n    1\n", &parser);
     CHECK(program == NULL);
     CHECK(parser.had_error);
-    CHECK(strstr(parser.error_message, "expected '..' between range bounds") != NULL);
 
     program = parse_program("for i in 1..2\n    1\n", &parser);
     CHECK(program == NULL);
     CHECK(parser.had_error);
-    CHECK(strstr(parser.error_message, "expected ':' after range") != NULL);
+    CHECK(strstr(parser.error_message, "expected ':' after loop header") != NULL);
+}
+
+static void test_parser_list_literal(void) {
+    Parser parser;
+    AstNode *program = parse_program("[1, 2, 3]\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    CHECK(stmt->type == AST_EXPRESSION_STATEMENT);
+    AstNode *list = stmt->as.expression_statement.expression;
+    CHECK(list->type == AST_LIST);
+    CHECK(list->as.list.elements.count == 3);
+    CHECK(list->as.list.elements.items[0]->type == AST_INTEGER);
+    CHECK(list->as.list.elements.items[0]->as.integer == 1);
+    CHECK(list->as.list.elements.items[2]->as.integer == 3);
+    ast_free(program);
+
+    program = parse_program("[]\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    list = program->as.block.statements.items[0]->as.expression_statement.expression;
+    CHECK(list->type == AST_LIST);
+    CHECK(list->as.list.elements.count == 0);
+    ast_free(program);
+
+    /* Nested lists and a trailing comma are both accepted. */
+    program = parse_program("[1, [2, 3], ]\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    list = program->as.block.statements.items[0]->as.expression_statement.expression;
+    CHECK(list->type == AST_LIST);
+    CHECK(list->as.list.elements.count == 2);
+    CHECK(list->as.list.elements.items[1]->type == AST_LIST);
+    CHECK(list->as.list.elements.items[1]->as.list.elements.count == 2);
+    ast_free(program);
+
+    program = parse_program("[1, 2\n", &parser);
+    CHECK(program == NULL);
+    CHECK(parser.had_error);
+    CHECK(strstr(parser.error_message, "expected ']' after list elements") != NULL);
+}
+
+static void test_parser_index_expression(void) {
+    Parser parser;
+    AstNode *program = parse_program("xs[0]\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    AstNode *index = stmt->as.expression_statement.expression;
+    CHECK(index->type == AST_INDEX);
+    CHECK(index->as.index_expression.object->type == AST_IDENTIFIER);
+    CHECK(index->as.index_expression.index->type == AST_INTEGER);
+    CHECK(index->as.index_expression.index->as.integer == 0);
+    ast_free(program);
+
+    /* Indexing binds tighter than '+' and chains left-to-right. */
+    program = parse_program("xs[1] + 2\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *binary = program->as.block.statements.items[0]->as.expression_statement.expression;
+    CHECK(binary->type == AST_BINARY);
+    CHECK(binary->as.binary.operator_type == TOKEN_PLUS);
+    CHECK(binary->as.binary.left->type == AST_INDEX);
+    CHECK(binary->as.binary.right->type == AST_INTEGER);
+    ast_free(program);
+
+    /* A call followed by an index parses as (call)[index]. */
+    program = parse_program("f(x)[0]\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    index = program->as.block.statements.items[0]->as.expression_statement.expression;
+    CHECK(index->type == AST_INDEX);
+    CHECK(index->as.index_expression.object->type == AST_CALL);
+    ast_free(program);
+
+    /* Nested indexing chains. */
+    program = parse_program("m[0][1]\n", &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    index = program->as.block.statements.items[0]->as.expression_statement.expression;
+    CHECK(index->type == AST_INDEX);
+    CHECK(index->as.index_expression.index->as.integer == 1);
+    CHECK(index->as.index_expression.object->type == AST_INDEX);
+    ast_free(program);
+
+    program = parse_program("xs[0\n", &parser);
+    CHECK(program == NULL);
+    CHECK(parser.had_error);
+    CHECK(strstr(parser.error_message, "expected ']' after index") != NULL);
+}
+
+static void test_parser_for_list_mode(void) {
+    Parser parser;
+    AstNode *program = parse_program(
+        "for x in items:\n"
+        "    x\n",
+        &parser);
+    CHECK(program != NULL);
+    if (program == NULL) {
+        return;
+    }
+    AstNode *stmt = program->as.block.statements.items[0];
+    CHECK(stmt->type == AST_FOR);
+    CHECK(strcmp(stmt->as.for_statement.variable, "x") == 0);
+    CHECK(stmt->as.for_statement.low->type == AST_IDENTIFIER);
+    CHECK(strcmp(stmt->as.for_statement.low->as.identifier, "items") == 0);
+    CHECK(stmt->as.for_statement.high == NULL);
+    CHECK(stmt->as.for_statement.body->type == AST_BLOCK);
+    ast_free(program);
 }
 
 /*
@@ -1340,6 +1473,142 @@ static void test_eval_loop_errors(void) {
     value_free(&run.result);
 }
 
+static void test_eval_list_literal(void) {
+    RunResult run = run_source("[1, 2, 3]\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.error[0] == '\0');
+    CHECK(run.result.type == VALUE_LIST);
+    CHECK(run.result.as.list.count == 3);
+    CHECK(run.result.as.list.items[0].as.integer == 1);
+    CHECK(run.result.as.list.items[1].as.integer == 2);
+    CHECK(run.result.as.list.items[2].as.integer == 3);
+    value_free(&run.result);
+
+    run = run_source("[]\n");
+    CHECK(run.parsed == 1);
+    CHECK(run.result.type == VALUE_LIST);
+    CHECK(run.result.as.list.count == 0);
+    value_free(&run.result);
+
+    run = run_source("[1, \"two\", true, null]\n");
+    CHECK(run.result.type == VALUE_LIST);
+    CHECK(run.result.as.list.count == 4);
+    CHECK(run.result.as.list.items[0].type == VALUE_INT);
+    CHECK(run.result.as.list.items[1].type == VALUE_STRING);
+    CHECK(strcmp(run.result.as.list.items[1].as.string, "two") == 0);
+    CHECK(run.result.as.list.items[2].type == VALUE_BOOL);
+    CHECK(run.result.as.list.items[3].type == VALUE_NULL);
+    value_free(&run.result);
+
+    /* Nested literals evaluate depth-first into independent lists. */
+    run = run_source("[[1, 2], [3]]\n");
+    CHECK(run.result.type == VALUE_LIST);
+    CHECK(run.result.as.list.count == 2);
+    CHECK(run.result.as.list.items[0].type == VALUE_LIST);
+    CHECK(run.result.as.list.items[0].as.list.count == 2);
+    CHECK(run.result.as.list.items[1].as.list.items[0].as.integer == 3);
+    value_free(&run.result);
+}
+
+static void test_eval_list_index(void) {
+    check_int_result("[10, 20, 30][1]\n", 20);
+    check_int_result("let xs = [4, 5, 6]\nxs[0]\n", 4);
+    check_int_result("let xs = [4, 5, 6]\nxs[1] + xs[2]\n", 11);
+    check_int_result("let m = [[1, 2], [3, 4]]\nm[1][0]\n", 3);
+    check_int_result("let m = [[1, 2], [3, 4]]\nm[0][1] + m[1][1]\n", 6);
+    check_stdlib_string("let xs = [\"a\", \"b\"]\nxs[1]\n", "b");
+}
+
+static void test_eval_string_index(void) {
+    check_stdlib_string("\"hello\"[0]\n", "h");
+    check_stdlib_string("\"hello\"[4]\n", "o");
+    check_stdlib_int("len(\"abc\"[1])\n", 1);
+}
+
+static void test_eval_index_errors(void) {
+    check_stdlib_error("[1, 2][2]\n");
+    check_stdlib_error("[1, 2][-1]\n");
+    check_stdlib_error("[1, 2][1.5]\n");
+    check_stdlib_error("[1, 2][\"x\"]\n");
+    check_stdlib_error("42[0]\n");
+    check_stdlib_error("null[0]\n");
+    check_stdlib_error("\"hi\"[5]\n");
+    check_stdlib_error("\"hi\"[-1]\n");
+}
+
+static void test_eval_for_in_list(void) {
+    check_int_result(
+        "mut total = 0\n"
+        "for x in [1, 2, 3, 4]:\n"
+        "    total = total + x\n"
+        "total\n",
+        10);
+    check_int_result(
+        "mut total = 0\n"
+        "for x in [1, 2, 3, 4]:\n"
+        "    if x == 3:\n"
+        "        break\n"
+        "    total = total + x\n"
+        "total\n",
+        3);
+    check_int_result(
+        "mut total = 0\n"
+        "for x in [1, 2, 3, 4]:\n"
+        "    if x % 2 == 0:\n"
+        "        continue\n"
+        "    total = total + x\n"
+        "total\n",
+        4);
+    check_int_result("for x in [7, 8, 9]:\n    0\nx\n", 9);
+    check_int_result("mut n = 0\nfor x in []:\n    n = n + 1\nn\n", 0);
+    check_int_result(
+        "mut total = 0\n"
+        "for row in [[1, 2], [3, 4]]:\n"
+        "    for cell in row:\n"
+        "        total = total + cell\n"
+        "total\n",
+        10);
+    check_stdlib_error("for x in 5:\n    1\n");
+    check_stdlib_error("for x in \"ab\":\n    1\n");
+}
+
+static void test_eval_list_equality(void) {
+    RunResult run = run_source("[1, 2] == [1, 2]\n");
+    CHECK(run.result.type == VALUE_BOOL);
+    CHECK(run.result.as.boolean == true);
+    value_free(&run.result);
+
+    run = run_source("[1, 2] == [1, 3]\n");
+    CHECK(run.result.type == VALUE_BOOL);
+    CHECK(run.result.as.boolean == false);
+    value_free(&run.result);
+
+    run = run_source("[1, 2] != [1, 2]\n");
+    CHECK(run.result.type == VALUE_BOOL);
+    CHECK(run.result.as.boolean == false);
+    value_free(&run.result);
+
+    run = run_source("[[1], [2]] == [[1], [2]]\n");
+    CHECK(run.result.type == VALUE_BOOL);
+    CHECK(run.result.as.boolean == true);
+    value_free(&run.result);
+
+    run = run_source("[1, 2] == [1, 2, 3]\n");
+    CHECK(run.result.as.boolean == false);
+    value_free(&run.result);
+
+    /* Different element types are never equal. */
+    run = run_source("[1] == 1\n");
+    CHECK(run.result.as.boolean == false);
+    value_free(&run.result);
+}
+
+static void test_eval_list_truthiness(void) {
+    check_int_result("mut r = 0\nif []:\n    r = 1\nelse:\n    r = 2\nr\n", 2);
+    check_int_result("mut r = 0\nif [0]:\n    r = 1\nelse:\n    r = 2\nr\n", 1);
+    check_int_result("mut r = 0\nif [null]:\n    r = 1\nelse:\n    r = 2\nr\n", 1);
+}
+
 static void test_eval_integer_operations(void) {
     check_int_result("1 + 2 * 3\n", 7);
     check_int_result("10 - 4\n", 6);
@@ -1524,6 +1793,9 @@ static void test_stdlib_len(void) {
     check_stdlib_int("len(\"\")\n", 0);
     check_stdlib_int("let s = \"abc\"\nlen(s)\n", 3);
     check_stdlib_int("len(str(12345))\n", 5);
+    check_stdlib_int("len([1, 2, 3])\n", 3);
+    check_stdlib_int("len([])\n", 0);
+    check_stdlib_int("len([[1, 2], 3])\n", 2);
     check_stdlib_error("len(42)\n");
     check_stdlib_error("len(print)\n");
     check_stdlib_error("len()\n");
@@ -1965,6 +2237,8 @@ static void test_stdlib_type(void) {
     check_stdlib_string("type(1.5)\n", "float");
     check_stdlib_string("type(true)\n", "bool");
     check_stdlib_string("type(\"s\")\n", "string");
+    check_stdlib_string("type([1, 2])\n", "list");
+    check_stdlib_string("type([])\n", "list");
     check_stdlib_string("type(null)\n", "null");
     check_stdlib_string("type(print)\n", "native");
     check_stdlib_string("fn double_value(x):\n    return x * 2\ntype(double_value)\n", "fn");
@@ -2234,6 +2508,42 @@ static void test_value_ownership(void) {
     CHECK(int_value.type == VALUE_NULL);
 }
 
+static void test_value_list_ownership(void) {
+    Value items[2];
+    items[0] = value_string_copy("a");
+    items[1] = value_int(7);
+
+    Value list = value_list(items, 2);
+    CHECK(list.type == VALUE_LIST);
+    CHECK(list.as.list.count == 2);
+    CHECK(list.as.list.items[0].type == VALUE_STRING);
+    CHECK(strcmp(list.as.list.items[0].as.string, "a") == 0);
+    CHECK(list.as.list.items[0].as.string != items[0].as.string);
+    CHECK(list.as.list.items[1].as.integer == 7);
+
+    Value clone = value_clone(&list);
+    CHECK(clone.type == VALUE_LIST);
+    CHECK(clone.as.list.count == 2);
+    CHECK(clone.as.list.items != list.as.list.items);
+    CHECK(clone.as.list.items[0].as.string != list.as.list.items[0].as.string);
+    CHECK(strcmp(clone.as.list.items[0].as.string, "a") == 0);
+
+    value_free(&clone);
+    CHECK(clone.type == VALUE_NULL);
+    value_free(&list);
+    CHECK(list.type == VALUE_NULL);
+
+    value_free(&items[0]);
+    value_free(&items[1]);
+
+    /* An empty list owns no element storage but is still a valid list. */
+    Value empty = value_list(NULL, 0);
+    CHECK(empty.type == VALUE_LIST);
+    CHECK(empty.as.list.count == 0);
+    value_free(&empty);
+    CHECK(empty.type == VALUE_NULL);
+}
+
 static void test_value_native_ownership(void) {
     Value native = value_native(native_add);
     CHECK(native.type == VALUE_NATIVE);
@@ -2305,6 +2615,29 @@ static void test_value_to_string(void) {
     CHECK(strcmp(text.as.string, "hi") == 0);
     value_free(&text);
     value_free(&string_value);
+
+    /* Lists render with raw element display; nested lists recurse. */
+    Value list_items[3];
+    list_items[0] = value_int(1);
+    list_items[1] = value_string_copy("a");
+    list_items[2] = value_bool(true);
+    Value list_value = value_list(list_items, 3);
+    text = value_to_string(&list_value);
+    CHECK(text.type == VALUE_STRING);
+    CHECK(strcmp(text.as.string, "[1, a, true]") == 0);
+    value_free(&text);
+
+    Value nested[1];
+    nested[0] = value_clone(&list_value);
+    Value nested_value = value_list(nested, 1);
+    text = value_to_string(&nested_value);
+    CHECK(text.type == VALUE_STRING);
+    CHECK(strcmp(text.as.string, "[[1, a, true]]") == 0);
+    value_free(&text);
+    value_free(&nested_value);
+    value_free(&nested[0]);
+    value_free(&list_value);
+    value_free(&list_items[1]);
 
     value_free(&null_value);
     value_free(&bool_value);
@@ -2379,6 +2712,9 @@ int main(void) {
     test_parser_for_loop_identifiers();
     test_parser_break_continue();
     test_parser_loop_errors();
+    test_parser_list_literal();
+    test_parser_index_expression();
+    test_parser_for_list_mode();
 
     /* Evaluator */
     test_eval_let_declaration();
@@ -2407,6 +2743,13 @@ int main(void) {
     test_eval_loop_return_in_function();
     test_eval_loop_variable_binding();
     test_eval_loop_errors();
+    test_eval_list_literal();
+    test_eval_list_index();
+    test_eval_string_index();
+    test_eval_index_errors();
+    test_eval_for_in_list();
+    test_eval_list_equality();
+    test_eval_list_truthiness();
     test_eval_integer_operations();
     test_eval_division_by_zero_fails();
     test_eval_undefined_lookup_fails();
@@ -2463,6 +2806,7 @@ int main(void) {
 
     /* Value ownership */
     test_value_ownership();
+    test_value_list_ownership();
     test_value_native_ownership();
     test_value_error_ownership();
     test_value_function_ownership();

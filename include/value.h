@@ -32,6 +32,10 @@ typedef struct FemFunction {
  *
  *   - VALUE_STRING owns a single NUL-terminated char* allocated with malloc.
  *     The string may be NULL only when the Value itself is empty/invalid.
+ *   - VALUE_LIST owns a heap array of count owned Values; each element is a
+ *     deep copy of whatever produced it, exactly like an environment binding.
+ *     value_list() and value_clone() clone every element, so nested lists and
+ *     strings inside lists are separately owned.
  *   - VALUE_ERROR owns its message the same way VALUE_STRING owns its bytes.
  *     It is a transient control value: native callbacks return it to report a
  *     runtime error instead of silently returning null. The evaluator turns a
@@ -65,6 +69,7 @@ typedef enum {
     VALUE_INT,
     VALUE_FLOAT,
     VALUE_STRING,
+    VALUE_LIST,
     VALUE_NATIVE,
     VALUE_FN,
     VALUE_ERROR
@@ -86,6 +91,7 @@ struct Value {
         int64_t integer;
         double floating;
         char *string;
+        struct { Value *items; size_t count; } list;
         FemNativeFunction function;
         FemFunction *fn;
     } as;
@@ -96,6 +102,7 @@ Value value_bool(bool value);
 Value value_int(int64_t value);
 Value value_float(double value);
 Value value_string_copy(const char *source);
+Value value_list(const Value *items, size_t count);
 Value value_native(FemNativeFunction function);
 Value value_function(
     const char *name,

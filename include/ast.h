@@ -28,7 +28,8 @@ typedef enum {
     AST_WHILE,
     AST_FOR,
     AST_BREAK,
-    AST_CONTINUE
+    AST_CONTINUE,
+    AST_INDEX
 } AstNodeType;
 
 typedef struct AstNode AstNode;
@@ -61,6 +62,7 @@ struct AstNode {
         struct { char *name; AstNodeList parameters; AstNode *body; } function;
         struct { AstNode *condition; AstNode *body; } while_statement;
         struct { char *variable; AstNode *low; AstNode *high; AstNode *body; } for_statement;
+        struct { AstNode *object; AstNode *index; } index_expression;
         struct { AstNodeList statements; } block;
     } as;
 };

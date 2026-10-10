@@ -26,3 +26,7 @@ print(acc)               # 1 + 2 + 4 + 5 = 12
 
 for i in 5..1:
     print(i)             # 5, 4, 3, 2
+
+# A for header without '..' walks a list instead of a range (see lists.fem).
+for word in ["hi", "there"]:
+    print(word)          # hi, there

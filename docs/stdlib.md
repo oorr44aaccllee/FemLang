@@ -24,10 +24,14 @@ print("hi", 42, true, 3.5)   # hi 42 true 3.5
 
 ## `len(s)`
 
-Byte length of a string. Expects exactly one string argument.
+Length of a string (byte count) or a list (element count). Expects exactly one
+string or list argument; anything else is an error (`len() expects a string or
+list`).
 
 ```femlang
-len("hello")   # 5
+len("hello")     # 5
+len([1, 2, 3])   # 3
+len([])          # 0
 ```
 
 ## `int(x)`
@@ -68,10 +72,11 @@ str("x")    # "x"
 ## `type(x)`
 
 Name of a value's dynamic type: `"null"`, `"bool"`, `"int"`, `"float"`,
-`"string"`, `"native"`, `"fn"`, or `"error"`.
+`"string"`, `"list"`, `"native"`, `"fn"`, or `"error"`.
 
 ```femlang
 type(1)      # "int"
+type([1, 2]) # "list"
 type(print)  # "native"
 type(add)    # "fn"   (a user-defined function)
 ```

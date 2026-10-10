@@ -55,7 +55,45 @@ static char *copy_string(const char *source) {
  * clone to VALUE_NULL, so callers can detect an out-of-memory condition.
  */
 static bool value_heap_owning(ValueType type) {
-    return type == VALUE_STRING || type == VALUE_ERROR || type == VALUE_FN;
+    return type == VALUE_STRING || type == VALUE_ERROR || type == VALUE_FN ||
+           type == VALUE_LIST;
+}
+
+/*
+ * Builds a list value owning a deep copy of every element. On allocation
+ * failure returns VALUE_NULL after releasing the partially built elements, so
+ * nothing is leaked.
+ */
+Value value_list(const Value *items, size_t count) {
+    Value value = {VALUE_NULL, {.integer = 0}};
+    if (count > 0 && items == NULL) {
+        return value;
+    }
+
+    Value *owned = NULL;
+    if (count > 0) {
+        owned = calloc(count, sizeof(*owned));
+        if (owned == NULL) {
+            return value;
+        }
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        owned[i] = value_clone(&items[i]);
+        if (owned[i].type == VALUE_NULL &&
+            value_heap_owning(items[i].type)) {
+            for (size_t j = 0; j <= i; j++) {
+                value_free(&owned[j]);
+            }
+            free(owned);
+            return value_null();
+        }
+    }
+
+    value.type = VALUE_LIST;
+    value.as.list.items = owned;
+    value.as.list.count = count;
+    return value;
 }
 
 Value value_string_copy(const char *source) {
@@ -230,6 +268,9 @@ static void append_value_to_buffer(
         case VALUE_NATIVE:
             snprintf(buffer, capacity, "<native function>");
             break;
+        case VALUE_LIST:
+            snprintf(buffer, capacity, "<list>");
+            break;
         case VALUE_FN:
             snprintf(buffer, capacity, "<fn '%s'>",
                      value->as.fn != NULL ? value->as.fn->name : "?");
@@ -246,6 +287,83 @@ static void append_value_to_buffer(
     }
 }
 
+typedef struct {
+    char *data;
+    size_t length;
+    size_t capacity;
+} StringBuffer;
+
+static bool buffer_reserve(StringBuffer *buffer, size_t extra) {
+    if (buffer->length + extra + 1U <= buffer->capacity) {
+        return true;
+    }
+    size_t new_capacity = buffer->capacity == 0 ? 16U : buffer->capacity * 2U;
+    while (new_capacity < buffer->length + extra + 1U) {
+        new_capacity *= 2U;
+    }
+    char *new_data = realloc(buffer->data, new_capacity);
+    if (new_data == NULL) {
+        return false;
+    }
+    buffer->data = new_data;
+    buffer->capacity = new_capacity;
+    return true;
+}
+
+static bool buffer_append(StringBuffer *buffer, const char *text, size_t length) {
+    if (!buffer_reserve(buffer, length)) {
+        return false;
+    }
+    memcpy(buffer->data + buffer->length, text, length);
+    buffer->length += length;
+    return true;
+}
+
+/*
+ * Renders a list as "[a, b, c]" where each element uses its display form
+ * (strings raw, nested lists recursing). On allocation failure returns
+ * VALUE_NULL and releases the buffer, so nothing leaks.
+ */
+static Value value_list_to_string(const Value *value) {
+    StringBuffer buffer = {0};
+    if (!buffer_reserve(&buffer, 2U)) {
+        return value_null();
+    }
+    buffer.data[buffer.length++] = '[';
+
+    for (size_t i = 0; i < value->as.list.count; i++) {
+        if (i > 0 && !buffer_append(&buffer, ", ", 2U)) {
+            free(buffer.data);
+            return value_null();
+        }
+        Value element_text = value_to_string(&value->as.list.items[i]);
+        if (element_text.type != VALUE_STRING) {
+            value_free(&element_text);
+            free(buffer.data);
+            return value_null();
+        }
+        if (!buffer_append(&buffer, element_text.as.string,
+                           strlen(element_text.as.string))) {
+            value_free(&element_text);
+            free(buffer.data);
+            return value_null();
+        }
+        value_free(&element_text);
+    }
+
+    if (!buffer_reserve(&buffer, 1U)) {
+        free(buffer.data);
+        return value_null();
+    }
+    buffer.data[buffer.length++] = ']';
+    buffer.data[buffer.length] = '\0';
+
+    Value result;
+    result.type = VALUE_STRING;
+    result.as.string = buffer.data;
+    return result;
+}
+
 /*
  * Returns the display form of a value as a new owned string: strings are the
  * raw bytes (no quotes), every other type is its textual representation. On
@@ -258,6 +376,9 @@ Value value_to_string(const Value *value) {
     }
     if (value->type == VALUE_STRING) {
         return value_string_copy(value->as.string);
+    }
+    if (value->type == VALUE_LIST) {
+        return value_list_to_string(value);
     }
     char buffer[64];
     append_value_to_buffer(value, buffer, sizeof(buffer));
@@ -284,6 +405,9 @@ Value value_clone(const Value *value) {
         cloned.as.fn = copy;
         return cloned;
     }
+    if (value->type == VALUE_LIST) {
+        return value_list(value->as.list.items, value->as.list.count);
+    }
     /* Non-string types own no heap memory; a shallow copy is safe. */
     return *value;
 }
@@ -296,9 +420,55 @@ void value_free(Value *value) {
         free(value->as.string);
     } else if (value->type == VALUE_FN) {
         function_free(value->as.fn);
+    } else if (value->type == VALUE_LIST) {
+        for (size_t i = 0; i < value->as.list.count; i++) {
+            value_free(&value->as.list.items[i]);
+        }
+        free(value->as.list.items);
     }
     value->type = VALUE_NULL;
     value->as.integer = 0;
+}
+
+/*
+ * Structural equality used by `==`/`!=`. Different types are never equal;
+ * lists compare element by element (recursing into nested lists), matching
+ * the language's string equality semantics.
+ */
+static bool values_equal(const Value *left, const Value *right) {
+    if (left == NULL || right == NULL) {
+        return left == right;
+    }
+    if (left->type != right->type) {
+        return false;
+    }
+    switch (left->type) {
+        case VALUE_INT:
+            return left->as.integer == right->as.integer;
+        case VALUE_FLOAT:
+            return left->as.floating == right->as.floating;
+        case VALUE_BOOL:
+            return left->as.boolean == right->as.boolean;
+        case VALUE_NULL:
+            return true;
+        case VALUE_STRING:
+            return left->as.string != NULL &&
+                   right->as.string != NULL &&
+                   strcmp(left->as.string, right->as.string) == 0;
+        case VALUE_LIST:
+            if (left->as.list.count != right->as.list.count) {
+                return false;
+            }
+            for (size_t i = 0; i < left->as.list.count; i++) {
+                if (!values_equal(&left->as.list.items[i],
+                                  &right->as.list.items[i])) {
+                    return false;
+                }
+            }
+            return true;
+        default:
+            return false;
+    }
 }
 
 bool value_truthy(const Value *value) {
@@ -316,6 +486,8 @@ bool value_truthy(const Value *value) {
             return value->as.floating != 0.0;
         case VALUE_STRING:
             return value->as.string != NULL && value->as.string[0] != '\0';
+        case VALUE_LIST:
+            return value->as.list.count > 0;
         case VALUE_NATIVE:
             return false;
         case VALUE_FN:
@@ -359,6 +531,16 @@ void print_value(const Value *value) {
                 }
             }
             putchar('"');
+            break;
+        case VALUE_LIST:
+            putchar('[');
+            for (size_t i = 0; i < value->as.list.count; i++) {
+                if (i > 0) {
+                    fputs(", ", stdout);
+                }
+                print_value(&value->as.list.items[i]);
+            }
+            putchar(']');
             break;
         case VALUE_NATIVE:
             fputs("<native function>", stdout);
@@ -1004,6 +1186,42 @@ static Value eval(Environment *env, const AstNode *node) {
         }
 
         case AST_FOR: {
+            if (node->as.for_statement.high == NULL) {
+                /* List mode: `for x in <list>` iterates the elements. */
+                Value iterable = eval(env, node->as.for_statement.low);
+                if (iterable.type != VALUE_LIST) {
+                    value_free(&iterable);
+                    env_record_error(env, "for in requires a list");
+                    return value_null();
+                }
+                env->loop_depth++;
+                for (size_t i = 0; i < iterable.as.list.count; i++) {
+                    if (!env_define(env, node->as.for_statement.variable,
+                                    &iterable.as.list.items[i], true)) {
+                        env->loop_depth--;
+                        value_free(&iterable);
+                        return value_null();
+                    }
+                    Value body_value = eval(env, node->as.for_statement.body);
+                    value_free(&body_value);
+                    if (env->loop_broken) {
+                        env->loop_broken = false;
+                        break;
+                    }
+                    if (env->loop_continue) {
+                        env->loop_continue = false;
+                        continue;
+                    }
+                    if (env_error(env) != NULL ||
+                        (env->call_frame && env->returned)) {
+                        break;
+                    }
+                }
+                env->loop_depth--;
+                value_free(&iterable);
+                return value_null();
+            }
+
             Value low = eval(env, node->as.for_statement.low);
             Value high = eval(env, node->as.for_statement.high);
             if (low.type != VALUE_INT || high.type != VALUE_INT) {
@@ -1067,6 +1285,88 @@ static Value eval(Environment *env, const AstNode *node) {
             }
             return value_null();
 
+        case AST_LIST: {
+            Value result = {VALUE_NULL, {.integer = 0}};
+            size_t count = node->as.list.elements.count;
+            Value *elements = NULL;
+            if (count > 0) {
+                elements = malloc(count * sizeof(*elements));
+                if (elements == NULL) {
+                    env_record_error(env, "out of memory");
+                    return value_null();
+                }
+            }
+            size_t completed = 0;
+            bool failed = false;
+            for (size_t i = 0; i < count; i++) {
+                Value element = eval(env, node->as.list.elements.items[i]);
+                if (env_error(env) != NULL) {
+                    value_free(&element);
+                    failed = true;
+                    break;
+                }
+                elements[completed++] = element;
+            }
+            if (failed) {
+                for (size_t i = 0; i < completed; i++) {
+                    value_free(&elements[i]);
+                }
+                free(elements);
+                return value_null();
+            }
+            result.type = VALUE_LIST;
+            result.as.list.items = elements;
+            result.as.list.count = completed;
+            return result;
+        }
+
+        case AST_INDEX: {
+            Value object = eval(env, node->as.index_expression.object);
+            Value index = eval(env, node->as.index_expression.index);
+            if (env_error(env) != NULL) {
+                value_free(&object);
+                value_free(&index);
+                return value_null();
+            }
+            Value result = value_null();
+            if (index.type != VALUE_INT) {
+                env_record_error(env,
+                                 "index expression requires an integer");
+            } else if (object.type == VALUE_LIST) {
+                int64_t i = index.as.integer;
+                if (i < 0 || (uint64_t)i >= object.as.list.count) {
+                    env_record_error(env, "list index out of bounds");
+                } else {
+                    const Value *element =
+                        &object.as.list.items[(size_t)i];
+                    result = value_clone(element);
+                    if (result.type == VALUE_NULL &&
+                        value_heap_owning(element->type)) {
+                        env_record_error(env, "out of memory");
+                    }
+                }
+            } else if (object.type == VALUE_STRING) {
+                size_t length = object.as.string != NULL
+                                    ? strlen(object.as.string)
+                                    : 0;
+                int64_t i = index.as.integer;
+                if (i < 0 || (uint64_t)i >= length) {
+                    env_record_error(env, "string index out of bounds");
+                } else {
+                    char ch[2] = {object.as.string[i], '\0'};
+                    result = value_string_copy(ch);
+                    if (result.type == VALUE_NULL) {
+                        env_record_error(env, "out of memory");
+                    }
+                }
+            } else {
+                env_record_error(env, "cannot index this value");
+            }
+            value_free(&object);
+            value_free(&index);
+            return result;
+        }
+
         case AST_UNARY: {
             Value operand = eval(env, node->as.unary.operand);
 
@@ -1101,31 +1401,7 @@ static Value eval(Environment *env, const AstNode *node) {
             TokenType op = node->as.binary.operator_type;
 
             if (op == TOKEN_EQUAL_EQUAL || op == TOKEN_BANG_EQUAL) {
-                bool equal = false;
-                if (left.type == right.type) {
-                    switch (left.type) {
-                        case VALUE_INT:
-                            equal = left.as.integer == right.as.integer;
-                            break;
-                        case VALUE_FLOAT:
-                            equal = left.as.floating == right.as.floating;
-                            break;
-                        case VALUE_BOOL:
-                            equal = left.as.boolean == right.as.boolean;
-                            break;
-                        case VALUE_NULL:
-                            equal = true;
-                            break;
-                        case VALUE_STRING:
-                            equal = left.as.string != NULL &&
-                                    right.as.string != NULL &&
-                                    strcmp(left.as.string, right.as.string) == 0;
-                            break;
-                        default:
-                            equal = false;
-                            break;
-                    }
-                }
+                bool equal = values_equal(&left, &right);
                 value_free(&left);
                 value_free(&right);
                 return value_bool(op == TOKEN_EQUAL_EQUAL ? equal : !equal);
@@ -1334,9 +1610,6 @@ static Value eval(Environment *env, const AstNode *node) {
             }
             return result;
         }
-
-        case AST_LIST:
-            return value_null();
     }
 
     return value_null();
