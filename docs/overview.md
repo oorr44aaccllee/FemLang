@@ -41,14 +41,21 @@ These features are enough to validate the language design while still supporting
 
 The language should be welcoming and expressive without becoming unserious or hard to maintain.
 
-Optional aliases could include:
+Optional aliases include:
 
 - `spark` as `let`
 - `serve` as `return`
 - `slay` as `break`
 - `skip` as `continue`
+- `uwu` as `fn`
+- `owo` as `if`
+- `nya` as `else`
+- `rawr` as `while`
+- `meow` as `print` (registered native alias)
 
-These should be implemented as optional syntax sugar or purely lexical aliases. The core language should remain conventional and easy to reason about.
+These are implemented as optional syntax sugar or purely lexical aliases (see
+`docs/playful-aliases.md`). The core language remains conventional and easy to
+reason about.
 
 ## Near-term roadmap
 

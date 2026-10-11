@@ -1,0 +1,21 @@
+# Playful aliases: optional synonyms for the conventional core keywords.
+#
+#   spark = let    serve = return   slay = break   skip = continue
+#   uwu   = fn     owo   = if       nya  = else    rawr = while
+#   meow  = print  (a registered native alias)
+#
+# Every alias produces the same construct as its canonical spelling.
+
+uwu greet(name):
+    owo name == "":
+        serve "hi there"
+    nya:
+        serve "hi, " + name
+
+spark who = "femboy"
+meow(greet(who))         # hi, femboy
+
+mut n = 3
+rawr n > 0:
+    meow(n)
+    n = n - 1

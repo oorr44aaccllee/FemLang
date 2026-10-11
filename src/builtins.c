@@ -110,6 +110,8 @@ void fem_stdlib_register(FemNativeRegistry *registry) {
         return;
     }
     native_register(registry, "print", native_print);
+    /* Playful alias: meow is print. */
+    native_register(registry, "meow", native_print);
     native_register(registry, "len", native_len);
     native_register(registry, "int", native_int);
     native_register(registry, "float", native_float);
