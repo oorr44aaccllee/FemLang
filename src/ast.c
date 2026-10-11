@@ -89,6 +89,23 @@ void ast_free(AstNode *node) {
             free_node_list(&node->as.function.parameters);
             ast_free(node->as.function.body);
             break;
+        case AST_WHILE:
+            ast_free(node->as.while_statement.condition);
+            ast_free(node->as.while_statement.body);
+            break;
+        case AST_FOR:
+            free(node->as.for_statement.variable);
+            ast_free(node->as.for_statement.low);
+            ast_free(node->as.for_statement.high);
+            ast_free(node->as.for_statement.body);
+            break;
+        case AST_INDEX:
+            ast_free(node->as.index_expression.object);
+            ast_free(node->as.index_expression.index);
+            break;
+        case AST_BREAK:
+        case AST_CONTINUE:
+            break;
         case AST_PROGRAM:
         case AST_BLOCK:
             free_node_list(&node->as.block.statements);

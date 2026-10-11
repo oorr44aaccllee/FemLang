@@ -10,7 +10,8 @@ prototype:
 - lexer tokenization with indentation handling
 - AST definitions
 - parser for declarations, expression statements, assignments, calls,
-  and `if`/`else`
+  list literals, indexing, `if`/`elif`/`else`, `while`, `for ... in ...`,
+  `break`, and `continue`
 - runtime tree-walking evaluator
 - command-line execution of a `.fem` file (`src/eval_main.c`)
 - environment model with immutable/mutable bindings and an error channel
@@ -21,12 +22,14 @@ prototype:
   `print`, `len`, `int`, `float`, `str`, `type`, with `VALUE_ERROR` reporting
 - user-defined functions (`fn name(params):` blocks) with local frames,
   recursion under a depth guard, and closures (see `docs/functions.md`)
+- ordered lists (`[..]` literals), `xs[i]` indexing (lists and strings),
+  structural list equality, and `for x in xs:` iteration (see `docs/lists.md`)
 
 ## Supported semantics
 
 The interpreter currently supports:
 
-- integer literals, float literals, strings, booleans, null
+- integer literals, float literals, strings, booleans, null, lists
 - `let` (immutable) and `mut` (mutable) declarations
 - reassignment of `mut` bindings (deep-copied values)
 - integer arithmetic with overflow and division-by-zero guards
@@ -41,6 +44,13 @@ The interpreter currently supports:
   `return` (early or implicit null) and `return` outside a function is an error
 - `if` / `elif` / `else` control flow (elif short-circuits: later conditions
   are only reached when earlier ones were false)
+- loops: `while` condition loops, `for i in low..high` integer ranges
+  (upper bound exclusive, descending when `low > high`), and `break` /
+  `continue` (with the `slay` / `skip` aliases); `return` from inside a loop
+  exits the loop and the function
+- lists: `[..]` literals (heterogeneous, nestable, trailing comma allowed),
+  `xs[i]` indexing of lists and strings (bounds-checked), structural `==` /
+  `!=`, truthiness by length, and `for x in xs:` iteration
 - unary minus and logical negation
 - error reporting through the environment error channel
 
@@ -61,14 +71,15 @@ See also:
 - `examples/calls.fem` (calls, comparisons, remainder);
 - `examples/stdlib.fem` (standard library tour);
 - `examples/functions.fem` (functions, recursion, closures);
-- `docs/stdlib.md` for the native standard library reference and
-  `docs/functions.md` for the function and closure reference.
+- `examples/loops.fem` (while, for ranges, break/continue);
+- `examples/lists.fem` (list literals, indexing, for-in, equality);
+- `docs/stdlib.md` for the native standard library reference,
+  `docs/functions.md` for the function and closure reference,
+  `docs/loops.md` for the loop reference, and `docs/lists.md` for lists.
 
 ## Not yet implemented
 
-- loops (`for`/`in`, `while`, `break`, `continue`), `try`/`catch`/`finally`,
-  `match`
-- string and list indexing; list literals
+- `try`/`catch`/`finally`, `match`
 
 These are the next milestones. Functions build directly on the
 call-expression machinery landed with the native registry; the standard

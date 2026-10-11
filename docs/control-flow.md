@@ -48,8 +48,8 @@ An `elif` or `else` without a preceding `if` is a parse error
 ## Conditions
 
 Any value can be a condition and is interpreted through `value_truthy()`:
-integers and floats are false when zero, strings are false when empty, `false`
-and `null` are false, everything else is true.
+integers and floats are false when zero, strings are false when empty, lists
+are false when empty, `false` and `null` are false, everything else is true.
 
 Comparison operators `< <= > >=` are fully evaluated on two integers or two
 floats and produce a boolean; comparing non-numbers reports
@@ -58,7 +58,8 @@ same type (different types are simply not equal).
 
 ## Current limitations
 
-This milestone does not yet implement loops. User-defined functions
+Loops are implemented and covered in `docs/loops.md` (`while`,
+`for i in low..high`, `break`, `continue`). User-defined functions
 (`fn name(params):`) with recursion and closures are implemented
 (docs/functions.md), as is native C function invocation from FemLang source
 (`f(...)`, including the bundled `print` native); see docs/ownership.md for

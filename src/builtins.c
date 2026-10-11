@@ -25,10 +25,13 @@ static Value native_len(size_t argument_count, const Value *arguments) {
     if (argument_count != 1) {
         return value_error("len() expects exactly 1 argument");
     }
-    if (arguments[0].type != VALUE_STRING) {
-        return value_error("len() expects a string");
+    if (arguments[0].type == VALUE_STRING) {
+        return value_int((int64_t)strlen(arguments[0].as.string));
     }
-    return value_int((int64_t)strlen(arguments[0].as.string));
+    if (arguments[0].type == VALUE_LIST) {
+        return value_int((int64_t)arguments[0].as.list.count);
+    }
+    return value_error("len() expects a string or list");
 }
 
 static Value native_int(size_t argument_count, const Value *arguments) {
@@ -93,6 +96,7 @@ static Value native_type(size_t argument_count, const Value *arguments) {
         case VALUE_INT: name = "int"; break;
         case VALUE_FLOAT: name = "float"; break;
         case VALUE_STRING: name = "string"; break;
+        case VALUE_LIST: name = "list"; break;
         case VALUE_NATIVE: name = "native"; break;
         case VALUE_FN: name = "fn"; break;
         case VALUE_ERROR: name = "error"; break;

@@ -53,6 +53,7 @@ const char *token_type_name(TokenType type) {
         case TOKEN_RIGHT_BRACE: return "RIGHT_BRACE";
         case TOKEN_COMMA: return "COMMA";
         case TOKEN_DOT: return "DOT";
+        case TOKEN_DOT_DOT: return "DOT_DOT";
         case TOKEN_COLON: return "COLON";
         case TOKEN_ARROW: return "ARROW";
         default: return "UNKNOWN";

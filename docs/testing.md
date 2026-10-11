@@ -38,6 +38,15 @@ standard-library (builtins) interfaces �?" the same interfaces future tools
 - function definitions: name and parameter list shape, the zero-parameter
   form, and error cases (missing name, missing `(`, non-identifier parameter,
   missing block);
+- loops: `while` shape, `for i in low..high` shape (integer and identifier
+  bounds), `break`/`continue` statements inside a loop body, and error cases
+  (`while` without a body or colon, `for` without a variable, `in`, `..`, or
+  `:`);
+- list literals (empty, heterogeneous, nested, trailing comma) and the missing
+  `]` error;
+- index expressions: shape, index precedence over `+`, `f(x)[0]` and
+  `m[0][1]` chains, and the missing `]` error;
+- `for x in xs:` list mode parses as `AST_FOR` with no upper bound;
 - invalid declarations (`let = 5`), missing value (`let x`), and invalid
   assignments (`x =`) are parse errors.
 
@@ -80,19 +89,33 @@ standard-library (builtins) interfaces �?" the same interfaces future tools
   closures (capture by variable, shared mutable state, escaping closures with
   independent state, `make_counter`, higher-order functions and function
   composition), functional value flow (`let g = f; g()`), and re-declaring a
-  function name.
+  function name;
+- loops: `while` iteration counting, `for` sums (ascending and descending
+  ranges, empty ranges), `break` from `while` and `for`, `continue` skipping
+  odd/even iterations, nested loops (inner `break` exits only the inner
+  loop), `return` from inside a loop inside a function, loop variable binding
+  (remains bound after the loop, rebinding it does not disturb the counter),
+  and the runtime errors (`break outside a loop`, `continue outside a
+  loop`, `for range requires two integers`);
+- lists: literals (empty, heterogeneous, nested) and nested evaluation,
+  indexing (in place, through a binding, nested `m[1][0]`, and string indexing
+  to a one-character string), index errors (out of bounds, negative,
+  non-integer index, and non-indexable operands), `for x in xs:` iteration
+  (sum, `break`, `continue`, binding retention, empty list, nested lists, and
+  the non-list error), structural equality (equal, unequal, nested, differing
+  lengths, and cross-type), and truthiness (empty false, non-empty true).
 
 ### Standard library
 
-- `len`: byte length of strings (including the empty string); arity and
-  type errors (`len(42)`, `len()`);
+- `len`: byte length of strings (including the empty string) and element
+  count of lists; arity and type errors (`len(42)`, `len()`);
 - `int`: float truncation toward zero, bool conversion, integer passthrough;
   non-numeric, wrong-arity, and out-of-range arguments are errors;
 - `float`: integer/bool/float conversion; type and arity errors;
 - `str`: display form of integers, floats, booleans, null, and identity for
   strings;
-- `type`: `"int"`, `"float"`, `"bool"`, `"string"`, `"null"`, `"native"`,
-  and `"fn"` for a user-defined function value; `str(f)` renders
+- `type`: `"int"`, `"float"`, `"bool"`, `"string"`, `"list"`, `"null"`,
+  `"native"`, and `"fn"` for a user-defined function value; `str(f)` renders
   `<fn 'name'>`; `print(f)` displays the same; arity errors;
 - `print`: success paths (zero or more arguments, mixed types) return null
   with no error.
@@ -119,6 +142,11 @@ standard-library (builtins) interfaces �?" the same interfaces future tools
   buffers) while sharing the body and re-retaining the closure; invalid inputs
   (NULL name or closure) yield `VALUE_NULL`; `value_to_string()` renders
   `<fn 'name'>`;
+- list values: `value_list()` deep-copies every element (strings have distinct
+  buffers, integers compare equal), clones own independent element arrays,
+  `value_free()` releases elements, empty lists are valid, and
+  `value_to_string()` renders `[1, a, true]` with raw string elements and
+  recursively for nested lists;
 - `value_to_string()`: display form of every value type, including raw string
   identity (distinct buffer) and the null-argument case.
 

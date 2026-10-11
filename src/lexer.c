@@ -185,6 +185,11 @@ static Token punctuation_token(
         return make_token(lexer, TOKEN_ARROW, start, line, column);
     }
 
+    if (c == '.' && peek_char(lexer) == '.') {
+        advance(lexer);
+        return make_token(lexer, TOKEN_DOT_DOT, start, line, column);
+    }
+
     if ((c == '=' || c == '!' || c == '<' || c == '>') && peek_char(lexer) == '=') {
         advance(lexer);
         TokenType type;

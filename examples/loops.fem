@@ -1,0 +1,32 @@
+# Loops: while, for in .., break, continue.
+#
+# for i in low..high walks low, low+1, ..., high-1 (upper bound exclusive).
+# When low > high the loop walks downward; when low == high it does not run.
+# break leaves the innermost loop; continue skips to the next value (the
+# aliases slay and skip lex to the same tokens).
+
+mut total = 0
+for i in 1..6:
+    total = total + i
+print(total)             # 15
+
+mut n = 5
+while n > 0:
+    n = n - 1
+print(n)                 # 0
+
+mut acc = 0
+for x in 1..20:
+    if x == 3:
+        skip             # continue alias
+    if x > 5:
+        slay             # break alias
+    acc = acc + x
+print(acc)               # 1 + 2 + 4 + 5 = 12
+
+for i in 5..1:
+    print(i)             # 5, 4, 3, 2
+
+# A for header without '..' walks a list instead of a range (see lists.fem).
+for word in ["hi", "there"]:
+    print(word)          # hi, there

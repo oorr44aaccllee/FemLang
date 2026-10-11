@@ -1,0 +1,36 @@
+# Lists: literals, indexing, for-in iteration and structural equality.
+#
+# Lists are ordered and can hold any value, including other lists. They are
+# immutable here: indexing reads a copy, and there is no element assignment.
+# Indexing with [i] works on lists and on strings (a string yields a
+# one-character string); indices run from 0 to len - 1.
+
+let numbers = [1, 2, 3, 4]
+print(numbers)            # [1, 2, 3, 4]
+print(len(numbers))       # 4
+print(numbers[0])         # 1
+print(numbers[3])         # 4
+print(type(numbers))      # list
+
+mut total = 0
+for n in numbers:
+    total = total + n
+print(total)              # 10
+
+# Nested lists index left-to-right: grid[row][column].
+let grid = [[1, 2], [3, 4]]
+print(grid[1][0])         # 3
+
+# break and continue work the same as in range loops.
+mut evens = 0
+for n in [1, 2, 3, 4, 5, 6]:
+    if n % 2 != 0:
+        continue
+    evens = evens + 1
+print(evens)              # 3
+
+# Strings are indexable too, and lists compare by structure.
+let word = "Fem"
+print(word[0])            # F
+print([1, 2] == [1, 2])   # true
+print([1, 2] == [2, 1])   # false

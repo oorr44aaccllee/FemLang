@@ -144,6 +144,39 @@ static AstNode *primary(Parser *parser) {
         return ast_new(AST_NULL, token.line, token.column);
     }
 
+    if (match(parser, TOKEN_LEFT_BRACKET)) {
+        AstNode *node = ast_new(AST_LIST, token.line, token.column);
+        if (node == NULL) {
+            return NULL;
+        }
+        if (!check(parser, TOKEN_RIGHT_BRACKET)) {
+            for (;;) {
+                AstNode *element = expression(parser);
+                if (element == NULL) {
+                    ast_free(node);
+                    return NULL;
+                }
+                if (!ast_list_push(&node->as.list.elements, element)) {
+                    ast_free(element);
+                    ast_free(node);
+                    return NULL;
+                }
+                if (!match(parser, TOKEN_COMMA)) {
+                    break;
+                }
+                if (check(parser, TOKEN_RIGHT_BRACKET)) {
+                    break;
+                }
+            }
+        }
+        if (!match(parser, TOKEN_RIGHT_BRACKET)) {
+            error_here(parser, "expected ']' after list elements");
+            ast_free(node);
+            return NULL;
+        }
+        return node;
+    }
+
     if (match(parser, TOKEN_IDENTIFIER)) {
         AstNode *node = ast_new(AST_IDENTIFIER, token.line, token.column);
         if (node == NULL) {
@@ -200,60 +233,76 @@ static bool parse_arguments(Parser *parser, AstNodeList *arguments) {
 }
 
 /*
- * A call expression: a primary followed by any number of parenthesized
- * argument lists. Postfix calls bind tighter than unary and binary operators,
- * so `f(1) + 2` is (f(1)) + 2.
+ * Folds the postfix operators that may follow a primary: parenthesized
+ * argument lists (`f(1)`) and index expressions (`xs[0]`). Postfix operators
+ * bind tighter than unary and binary operators, so `f(1) + 2` is (f(1)) + 2
+ * and `xs[0][1]` indexes twice. Chains like `f(x)[0]` mix both freely.
+ */
+static AstNode *postfix_tail(Parser *parser, AstNode *callee) {
+    while (callee != NULL) {
+        if (check(parser, TOKEN_LEFT_PAREN)) {
+            Token paren = parser->current;
+            advance(parser);
+
+            AstNode *node = ast_new(AST_CALL, paren.line, paren.column);
+            if (node == NULL) {
+                ast_free(callee);
+                return NULL;
+            }
+            node->as.call.callee = callee;
+
+            if (!parse_arguments(parser, &node->as.call.arguments)) {
+                ast_free(node);
+                return NULL;
+            }
+            callee = node;
+        } else if (check(parser, TOKEN_LEFT_BRACKET)) {
+            Token bracket = parser->current;
+            advance(parser);
+
+            AstNode *index = expression(parser);
+            if (index == NULL) {
+                ast_free(callee);
+                return NULL;
+            }
+            if (!match(parser, TOKEN_RIGHT_BRACKET)) {
+                error_here(parser, "expected ']' after index");
+                ast_free(index);
+                ast_free(callee);
+                return NULL;
+            }
+            AstNode *node = ast_new(AST_INDEX, bracket.line, bracket.column);
+            if (node == NULL) {
+                ast_free(index);
+                ast_free(callee);
+                return NULL;
+            }
+            node->as.index_expression.object = callee;
+            node->as.index_expression.index = index;
+            callee = node;
+        } else {
+            break;
+        }
+    }
+    return callee;
+}
+
+/*
+ * A call expression: a primary followed by postfix calls and index
+ * expressions.
  */
 static AstNode *call(Parser *parser) {
-    AstNode *callee = primary(parser);
-
-    while (callee != NULL && check(parser, TOKEN_LEFT_PAREN)) {
-        Token paren = parser->current;
-        advance(parser);
-
-        AstNode *node = ast_new(AST_CALL, paren.line, paren.column);
-        if (node == NULL) {
-            ast_free(callee);
-            return NULL;
-        }
-        node->as.call.callee = callee;
-
-        if (!parse_arguments(parser, &node->as.call.arguments)) {
-            ast_free(node);
-            return NULL;
-        }
-        callee = node;
-    }
-
-    return callee;
+    return postfix_tail(parser, primary(parser));
 }
 
 /*
  * Continuation of a call when the callee is already available. Used by
  * expression statements: the leading identifier was consumed to disambiguate
- * assignment, and any following '(' must still be folded into a call before
+ * assignment, and any following '(' or '[' must still be folded in before
  * binary operators continue.
  */
 static AstNode *call_tail(Parser *parser, AstNode *callee) {
-    while (callee != NULL && check(parser, TOKEN_LEFT_PAREN)) {
-        Token paren = parser->current;
-        advance(parser);
-
-        AstNode *node = ast_new(AST_CALL, paren.line, paren.column);
-        if (node == NULL) {
-            ast_free(callee);
-            return NULL;
-        }
-        node->as.call.callee = callee;
-
-        if (!parse_arguments(parser, &node->as.call.arguments)) {
-            ast_free(node);
-            return NULL;
-        }
-        callee = node;
-    }
-
-    return callee;
+    return postfix_tail(parser, callee);
 }
 
 static AstNode *unary(Parser *parser) {
@@ -507,6 +556,115 @@ static AstNode *if_statement(Parser *parser) {
     node->as.if_statement.then_branch = then_branch;
     node->as.if_statement.else_branch = else_branch;
     return node;
+}
+
+static AstNode *while_statement(Parser *parser) {
+    Token keyword = parser->previous;
+
+    AstNode *condition = expression(parser);
+    if (condition == NULL) {
+        return NULL;
+    }
+    if (!match(parser, TOKEN_COLON)) {
+        error_here(parser, "expected ':' after condition");
+        ast_free(condition);
+        return NULL;
+    }
+
+    AstNode *body = block(parser, keyword.line, keyword.column);
+    if (body == NULL) {
+        ast_free(condition);
+        return NULL;
+    }
+
+    AstNode *node = ast_new(AST_WHILE, keyword.line, keyword.column);
+    if (node == NULL) {
+        ast_free(condition);
+        ast_free(body);
+        return NULL;
+    }
+    node->as.while_statement.condition = condition;
+    node->as.while_statement.body = body;
+    return node;
+}
+
+static AstNode *for_statement(Parser *parser) {
+    Token keyword = parser->previous;
+
+    if (!check(parser, TOKEN_IDENTIFIER)) {
+        error_here(parser, "expected loop variable name after 'for'");
+        return NULL;
+    }
+    Token variable = parser->current;
+    advance(parser);
+
+    if (!match(parser, TOKEN_IN)) {
+        error_here(parser, "expected 'in' after loop variable");
+        return NULL;
+    }
+
+    AstNode *low = expression(parser);
+    if (low == NULL) {
+        return NULL;
+    }
+
+    /*
+     * Either a range loop (`for i in 0..n`) or a list loop (`for x in xs`).
+     * The '..' distinguishes them; a missing high bound marks list mode, in
+     * which `low` holds the iterable expression.
+     */
+    AstNode *high = NULL;
+    if (match(parser, TOKEN_DOT_DOT)) {
+        high = expression(parser);
+        if (high == NULL) {
+            ast_free(low);
+            return NULL;
+        }
+    }
+
+    if (!match(parser, TOKEN_COLON)) {
+        error_here(parser, "expected ':' after loop header");
+        ast_free(low);
+        ast_free(high);
+        return NULL;
+    }
+
+    AstNode *body = block(parser, keyword.line, keyword.column);
+    if (body == NULL) {
+        ast_free(low);
+        ast_free(high);
+        return NULL;
+    }
+
+    AstNode *node = ast_new(AST_FOR, keyword.line, keyword.column);
+    if (node == NULL) {
+        ast_free(low);
+        ast_free(high);
+        ast_free(body);
+        return NULL;
+    }
+    node->as.for_statement.variable = copy_identifier(&variable);
+    if (node->as.for_statement.variable == NULL) {
+        ast_free(node);
+        ast_free(low);
+        ast_free(high);
+        ast_free(body);
+        return NULL;
+    }
+    node->as.for_statement.low = low;
+    node->as.for_statement.high = high;
+    node->as.for_statement.body = body;
+    return node;
+}
+
+static AstNode *break_statement(Parser *parser) {
+    Token keyword = parser->previous;
+    return ast_new(AST_BREAK, keyword.line, keyword.column);
+}
+
+static AstNode *continue_statement(Parser *parser) {
+    Token keyword = parser->previous;
+    return ast_new(AST_CONTINUE, keyword.line, keyword.column);
 }
 
 static AstNode *parse_declaration(Parser *parser) {
@@ -763,6 +921,22 @@ static AstNode *statement(Parser *parser) {
 
     if (match(parser, TOKEN_FN)) {
         return parse_function(parser);
+    }
+
+    if (match(parser, TOKEN_WHILE)) {
+        return while_statement(parser);
+    }
+
+    if (match(parser, TOKEN_FOR)) {
+        return for_statement(parser);
+    }
+
+    if (match(parser, TOKEN_BREAK)) {
+        return break_statement(parser);
+    }
+
+    if (match(parser, TOKEN_CONTINUE)) {
+        return continue_statement(parser);
     }
 
     if (check(parser, TOKEN_ELIF) || check(parser, TOKEN_ELSE)) {

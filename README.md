@@ -81,8 +81,8 @@ The project is organized around a conventional compiler/runtime pipeline:
 
 The present milestone implements the lexer, AST, parser, tree-walking
 evaluator, environment model, native call expressions, user-defined functions
-with recursion and closures, and the native standard library; bytecode, VM,
-and lists remain planned.
+with recursion and closures, the native standard library, `if`/`elif`/`else`
+conditionals, loops, and lists; bytecode and the VM remain planned.
 
 ## Project status
 
@@ -102,12 +102,16 @@ Current milestone:
   (see docs/functions.md)
 - `if` / `elif` / `else` conditionals with short-circuiting `elif` chains
   (see docs/control-flow.md)
+- loops: `while`, `for i in low..high` ranges, `break` and `continue` (with
+  the `slay` / `skip` aliases), `return` from inside a loop
+  (see docs/loops.md)
+- lists: `[..]` literals, `xs[i]` indexing (lists and strings), `for x in xs:`
+  iteration, and structural equality (see docs/lists.md)
 - command-line interpreter: `./femlang examples/basic.fem`
 - automated regression test suite: `make test`
 
 Planned next milestones:
 
-- loops and lists
 - bytecode compiler and VM
 
 ## Build and run
